@@ -1,0 +1,20 @@
+{
+  "name": "atlas-hdos-project",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Atlas HDOS vertical slice.",
+  "scripts": {
+    "dev:web": "node 02_apps/web/server.mjs",
+    "dev:api": "node 03_services/api/src/server.mjs",
+    "db:migrate": "node 03_services/api/src/db/migrate.mjs",
+    "db:seed": "node 03_services/api/src/db/seed.mjs",
+    "smoke": "node Testing/smoke/smoke-check.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "workspaces": [
+    "02_apps/*",
+    "03_services/*"
+  ]
+}

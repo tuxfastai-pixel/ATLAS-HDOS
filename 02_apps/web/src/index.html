@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atlas HDOS</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="login-screen" class="screen login-screen" aria-labelledby="login-title">
+        <div class="login-panel">
+          <p class="eyebrow">Atlas HDOS</p>
+          <h1 id="login-title">Learner Login</h1>
+          <form id="login-form" class="stack">
+            <label>
+              Username
+              <input id="username" name="username" autocomplete="username" value="leago" required />
+            </label>
+            <label>
+              Password
+              <input id="password" name="password" type="password" autocomplete="current-password" value="atlas123" required />
+            </label>
+            <button type="submit">Log In</button>
+            <p id="login-error" class="error" role="alert"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="workspace-screen" class="screen hidden" aria-live="polite">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Paleontology Expedition</p>
+            <h1 id="welcome-heading">Welcome</h1>
+          </div>
+          <button id="refresh-summary" type="button">Refresh Summary</button>
+        </header>
+
+        <div class="dashboard-grid">
+          <section class="panel" aria-labelledby="missions-heading">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Learner Home</p>
+                <h2 id="missions-heading">Today's Missions</h2>
+              </div>
+              <span id="mission-count" class="status-pill">0 active</span>
+            </div>
+            <div id="missions-list" class="mission-list"></div>
+          </section>
+
+          <aside class="panel companion-panel" aria-labelledby="companion-heading">
+            <p class="eyebrow">Mock AI</p>
+            <h2 id="companion-heading">Atlas Companion</h2>
+            <div id="companion-thread" class="companion-thread"></div>
+            <form id="companion-form" class="companion-form">
+              <input id="companion-input" placeholder="Ask about the mission" aria-label="Ask Atlas Companion" />
+              <button type="submit">Ask</button>
+            </form>
+          </aside>
+
+          <section class="panel mission-detail" aria-labelledby="mission-heading">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Mission Detail</p>
+                <h2 id="mission-heading">Select a mission</h2>
+              </div>
+              <button id="complete-mission" type="button" disabled>Complete Mission</button>
+            </div>
+            <p id="mission-summary" class="muted">Open The Lost Fossil to begin.</p>
+            <ol id="mission-steps" class="steps"></ol>
+          </section>
+
+          <section class="panel parent-summary" aria-labelledby="parent-heading">
+            <p class="eyebrow">Parent Summary</p>
+            <h2 id="parent-heading">Siyana's View</h2>
+            <div id="parent-summary"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
+

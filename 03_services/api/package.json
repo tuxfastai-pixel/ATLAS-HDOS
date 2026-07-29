@@ -1,0 +1,15 @@
+{
+  "name": "atlas-api",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "start:dev": "node src/server.mjs",
+    "db:migrate": "node src/db/migrate.mjs",
+    "db:seed": "node src/db/seed.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
