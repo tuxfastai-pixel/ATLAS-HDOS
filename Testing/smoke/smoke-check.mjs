@@ -92,6 +92,7 @@ try {
   webProcess = start("node", ["02_apps/web/server.mjs"], { ATLAS_WEB_PORT: String(webPort) });
 
   await waitFor(`http://localhost:${apiPort}/health`);
+  await waitFor(`http://localhost:${apiPort}/ready`);
   await waitFor(`http://localhost:${webPort}/`);
 
   const login = await api("/auth/login", {
@@ -141,7 +142,7 @@ try {
 
   console.log("Smoke checks passed:");
   console.log("- PostgreSQL migration and seed commands completed");
-  console.log("- API health confirms database connectivity");
+  console.log("- API liveness and database readiness checks pass");
   console.log("- Web app serves locally");
   console.log("- Leago can log in");
   console.log("- Learner home includes today's missions");
