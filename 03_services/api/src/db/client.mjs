@@ -1,4 +1,5 @@
 import pg from "pg";
+import { loadConfig } from "../config.mjs";
 
 const { Pool } = pg;
 
@@ -9,9 +10,12 @@ export function getDatabaseUrl() {
 }
 
 export function createPool() {
+  const { poolSize } = loadConfig();
   return new Pool({
     connectionString: getDatabaseUrl(),
-    max: Number(process.env.ATLAS_DB_POOL_SIZE || 5)
+    max: poolSize,
+    connectionTimeoutMillis: 3000,
+    idleTimeoutMillis: 30000
   });
 }
 
@@ -22,11 +26,10 @@ export async function query(text, params = []) {
 }
 
 export async function checkDatabase() {
-  const result = await query("SELECT NOW() AS now");
-  return result.rows[0];
+  await query("SELECT 1");
+  return true;
 }
 
 export async function closeDatabase() {
   await pool.end();
 }
-

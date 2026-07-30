@@ -6,8 +6,11 @@
   "scripts": {
     "dev:web": "node 02_apps/web/server.mjs",
     "dev:api": "node 03_services/api/src/server.mjs",
+    "migrate": "node 03_services/api/src/db/migrate.mjs",
+    "seed": "node 03_services/api/src/db/seed.mjs",
     "db:migrate": "node 03_services/api/src/db/migrate.mjs",
     "db:seed": "node 03_services/api/src/db/seed.mjs",
+    "test": "node --test 03_services/api/test/*.test.mjs",
     "smoke": "node Testing/smoke/smoke-check.mjs"
   },
   "dependencies": {
