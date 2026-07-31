@@ -1,137 +1,92 @@
+import { authenticationBoundary } from "./auth.mjs";
 import { checkDatabase } from "./db/client.mjs";
-import {
-  completeMission,
-  findLearnerByCredentials,
-  getLearnerHome,
-  getMissionDetail,
-  getParentSummary,
-  saveCompanionMessage
-} from "./db/repository.mjs";
+import * as repository from "./db/repository.mjs";
+import { ApiError, errorBody, normalizeError } from "./errors.mjs";
+import { optionalIdentifier, readJson, rejectQueryParameters, requireStrings, validateIdentifier } from "./validation.mjs";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-headers": "content-type,authorization"
+  "access-control-allow-headers": "content-type,authorization,x-request-id"
 };
 
-export function createResponse(status, body) {
-  return {
-    status,
-    headers: jsonHeaders,
-    body: JSON.stringify(body)
-  };
-}
-
-export async function readJson(req) {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk;
-  }
-
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+export function createResponse(status, body, headers = {}) {
+  return { status, headers: { ...jsonHeaders, ...headers }, body: status === 204 ? "" : JSON.stringify(body) };
 }
 
 export function mockCompanionReply(message = "") {
   const text = message.toLowerCase();
-
-  if (text.includes("fossil")) {
-    return "A fossil is preserved evidence of a living thing from long ago. Try explaining it as a clue from ancient Earth.";
-  }
-
-  if (text.includes("complete") || text.includes("done")) {
-    return "Strong work. Your next step is to tell Siyana one thing the fossil helped you discover.";
-  }
-
+  if (text.includes("fossil")) return "A fossil is preserved evidence of a living thing from long ago. Try explaining it as a clue from ancient Earth.";
+  if (text.includes("complete") || text.includes("done")) return "Strong work. Your next step is to tell Siyana one thing the fossil helped you discover.";
   return "I can help you think through the mission. Start with one observation, then explain what it might mean.";
 }
 
-export async function routeRequest(req, url) {
-  if (req.method === "OPTIONS") {
-    return createResponse(204, {});
-  }
+export async function routeRequest(req, url, dependencies = {}) {
+  const db = dependencies.repository || repository;
+  const databaseCheck = dependencies.checkDatabase || checkDatabase;
+  authenticationBoundary(req);
+  rejectQueryParameters(url);
 
-  if (req.method === "GET" && url.pathname === "/health") {
+  if (req.method === "OPTIONS") return createResponse(204, null);
+  if (req.method === "GET" && url.pathname === "/health") return createResponse(200, { ok: true, service: "atlas-api" });
+  if (req.method === "GET" && url.pathname === "/ready") {
     try {
-      await checkDatabase();
+      await databaseCheck();
       return createResponse(200, { ok: true, service: "atlas-api", database: "connected" });
-    } catch (error) {
-      return createResponse(503, { ok: false, service: "atlas-api", database: "unavailable", error: error.message });
+    } catch (cause) {
+      throw new ApiError("DEPENDENCY_UNAVAILABLE", "A required dependency is unavailable", { cause });
     }
   }
 
   if (req.method === "POST" && url.pathname === "/auth/login") {
-    const body = await readJson(req);
-    const username = String(body.username || "").toLowerCase();
-    const learner = await findLearnerByCredentials(username, body.password || "");
-
-    if (!learner) {
-      return createResponse(401, { error: "Invalid Atlas development credentials" });
-    }
-
-    return createResponse(200, {
-      token: "atlas-dev-token-leago",
-      user: {
-        id: learner.id,
-        name: learner.display_name,
-        role: "learner",
-        parentId: learner.parent_id
-      }
-    });
+    const { username, password } = requireStrings(await readJson(req), ["username", "password"]);
+    const learner = await db.findLearnerByCredentials(username.toLowerCase(), password);
+    if (!learner) throw new ApiError("UNAUTHENTICATED", "Authentication required");
+    return createResponse(200, { token: "atlas-dev-token-leago", user: { id: learner.id, name: learner.display_name, role: "learner", parentId: learner.parent_id } });
   }
 
   const homeMatch = url.pathname.match(/^\/learners\/([^/]+)\/home$/);
   if (req.method === "GET" && homeMatch) {
-    const home = await getLearnerHome(homeMatch[1]);
-    return home ? createResponse(200, home) : createResponse(404, { error: "Learner not found" });
+    const home = await db.getLearnerHome(validateIdentifier(homeMatch[1], "path", "learnerId"));
+    if (!home) throw new ApiError("NOT_FOUND", "Learner not found");
+    return createResponse(200, home);
   }
 
   const missionMatch = url.pathname.match(/^\/missions\/([^/]+)$/);
   if (req.method === "GET" && missionMatch) {
-    const mission = await getMissionDetail(missionMatch[1]);
-    return mission ? createResponse(200, mission) : createResponse(404, { error: "Mission not found" });
+    const mission = await db.getMissionDetail(validateIdentifier(missionMatch[1], "path", "missionId"));
+    if (!mission) throw new ApiError("NOT_FOUND", "Mission not found");
+    return createResponse(200, mission);
   }
 
   const completeMatch = url.pathname.match(/^\/missions\/([^/]+)\/complete$/);
   if (req.method === "POST" && completeMatch) {
-    const mission = await completeMission(completeMatch[1]);
-    if (!mission) {
-      return createResponse(404, { error: "Mission not found" });
-    }
-
-    return createResponse(200, {
-      status: mission.status,
-      missionId: mission.id,
-      xpAwarded: 25,
-      updatedDomains: ["Communication", "Thinking", "Science"]
-    });
+    await readJson(req, { required: false });
+    const mission = await db.completeMission(validateIdentifier(completeMatch[1], "path", "missionId"));
+    if (!mission) throw new ApiError("NOT_FOUND", "Mission not found");
+    return createResponse(200, { status: mission.status, missionId: mission.id, xpAwarded: 25, updatedDomains: ["Communication", "Thinking", "Science"] });
   }
 
   if (req.method === "POST" && url.pathname === "/companion/message") {
     const body = await readJson(req);
-    const reply = mockCompanionReply(body.message);
-    const record = await saveCompanionMessage({
-      learnerId: body.learnerId || "learner-leago",
-      missionId: body.missionId || null,
-      message: body.message || "",
-      reply
-    });
-    return createResponse(200, record);
+    const { message } = requireStrings(body, ["message"]);
+    const learnerId = body.learnerId === undefined ? "learner-leago" : validateIdentifier(body.learnerId, "body", "learnerId");
+    const missionId = optionalIdentifier(body, "missionId");
+    return createResponse(200, await db.saveCompanionMessage({ learnerId, missionId, message, reply: mockCompanionReply(message) }));
   }
 
   const parentMatch = url.pathname.match(/^\/parents\/([^/]+)\/summary$/);
   if (req.method === "GET" && parentMatch) {
-    const summary = await getParentSummary(parentMatch[1]);
-    return summary ? createResponse(200, summary) : createResponse(404, { error: "Parent not found" });
+    const summary = await db.getParentSummary(validateIdentifier(parentMatch[1], "path", "parentId"));
+    if (!summary) throw new ApiError("NOT_FOUND", "Parent not found");
+    return createResponse(200, summary);
   }
 
-  return createResponse(404, { error: "Atlas API route not found" });
+  throw new ApiError("NOT_FOUND", "Atlas API route not found");
+}
+
+export function errorResponse(error) {
+  const safeError = normalizeError(error);
+  return createResponse(safeError.status, errorBody(safeError));
 }

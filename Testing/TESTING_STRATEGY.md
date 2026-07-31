@@ -31,3 +31,8 @@ Each major feature should document:
 - Known risks
 - Manual verification steps
 
+## API Platform Checks
+
+- Run `npm test` for request validation, standardized errors, health/readiness, dependency failure, request logging, and sensitive-error leakage coverage.
+- Run `npm run migrate`, `npm run seed`, and `npm run smoke` for the PostgreSQL-backed persisted journey.
+- Verify `/health` independently of PostgreSQL and verify `/ready` both with a reachable database and with an intentionally unavailable database URL.

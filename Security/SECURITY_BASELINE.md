@@ -31,3 +31,10 @@
 - Keep deployment credentials separate from developer credentials.
 - Review security assumptions before each release.
 
+## Atlas API Boundary
+
+- Validate path, query, and JSON body input centrally before database access.
+- Return the standard public error contract without stack traces, SQL, configuration, credentials, or dependency details.
+- Keep request logs metadata-only; never record authorization headers, cookies, tokens, request bodies, or learner data.
+- Treat `03_services/api/src/auth.mjs` as the future PEOS verification boundary. Its Sprint 004 development identity resolver is not production authentication or authorization.
+- Use `/health` only for liveness and `/ready` for PostgreSQL dependency readiness.
