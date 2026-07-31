@@ -4,7 +4,8 @@ const state = {
   token: "",
   learnerId: "",
   parentId: "",
-  activeMissionId: ""
+  activeMissionId: "",
+  learnerName: ""
 };
 
 const el = {
@@ -31,6 +32,7 @@ async function api(path, options = {}) {
     ...options,
     headers: {
       "content-type": "application/json",
+      ...(state.token ? { authorization: `Bearer ${state.token}` } : {}),
       ...(options.headers || {})
     }
   });
@@ -53,6 +55,7 @@ function missionStatusLabel(status) {
 }
 
 function renderHome(home) {
+  state.learnerName = home.learner.name;
   el.welcomeHeading.textContent = `Good Morning, ${home.learner.name}`;
   el.missionCount.textContent = `${home.todayMissions.length} mission${home.todayMissions.length === 1 ? "" : "s"}`;
   el.missionsList.innerHTML = "";
@@ -146,10 +149,10 @@ el.loginForm.addEventListener("submit", async (event) => {
     state.learnerId = result.user.id;
     state.parentId = result.user.parentId;
     showWorkspace();
-    addCompanionMessage("Atlas Companion", "Ready for today's fossil expedition?");
-    await refreshHome();
-    await openMission("mission-lost-fossil");
-    await refreshParentSummary();
+    const home = await api(`/learners/${state.learnerId}/home`);
+    renderHome(home);
+    addCompanionMessage("Atlas Companion", home.companionMessage);
+    if (home.todayMissions[0]) await openMission(home.todayMissions[0].id);
   } catch (error) {
     el.loginError.textContent = error.message;
   }
@@ -160,11 +163,13 @@ el.completeMission.addEventListener("click", async () => {
     return;
   }
 
-  await api(`/missions/${state.activeMissionId}/complete`, { method: "POST", body: "{}" });
+  await api(`/missions/${state.activeMissionId}/complete`, {
+    method: "POST",
+    body: JSON.stringify({ explanation: "I worked through each mission step.", reflection: "I feel more confident and ready to keep learning." })
+  });
   await openMission(state.activeMissionId);
   await refreshHome();
-  await refreshParentSummary();
-  addCompanionMessage("Atlas Companion", "Mission complete. Tell Siyana one discovery from The Lost Fossil.");
+  addCompanionMessage("Atlas Companion", "Mission complete. Celebrate one thing you discovered!");
 });
 
 el.companionForm.addEventListener("submit", async (event) => {
@@ -176,7 +181,7 @@ el.companionForm.addEventListener("submit", async (event) => {
   }
 
   el.companionInput.value = "";
-  addCompanionMessage("Leago", text);
+  addCompanionMessage(state.learnerName, text);
   const result = await api("/companion/message", {
     method: "POST",
     body: JSON.stringify({
@@ -188,5 +193,4 @@ el.companionForm.addEventListener("submit", async (event) => {
   addCompanionMessage("Atlas Companion", result.reply);
 });
 
-el.refreshSummary.addEventListener("click", refreshParentSummary);
-
+el.refreshSummary?.addEventListener("click", refreshParentSummary);

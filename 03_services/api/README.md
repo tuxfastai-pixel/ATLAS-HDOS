@@ -26,7 +26,14 @@ Supported error statuses are 400 validation, 401 unauthenticated, 403 unauthoriz
 
 ## Authentication boundary
 
-`src/auth.mjs` is the explicit future PEOS identity-verification seam. Sprint 004 only resolves the existing development bearer token and does not enforce new route policy, so local/demo flows remain compatible. PEOS authentication and authorization are out of scope.
+`src/auth.mjs` is the explicit future PEOS identity-verification seam. Sprint 005
+supports the development-only `leago` and `siyana` learner logins and the
+`atlas-dev-token-parent` parent bearer token. These fixed credentials are not
+production authentication and must be replaced by PEOS identity verification.
+
+Learner routes enforce subject ownership. The development parent can read both
+children linked to `parent-siyana`; learners cannot read the parent summary or
+one another's home, mission detail, or mission history.
 
 ## Commands
 
