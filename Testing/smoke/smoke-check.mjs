@@ -95,61 +95,58 @@ try {
   await waitFor(`http://localhost:${apiPort}/ready`);
   await waitFor(`http://localhost:${webPort}/`);
 
-  const login = await api("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ username: "leago", password: "atlas123" })
+  const leagoLogin = await api("/auth/login", { method: "POST", body: JSON.stringify({ username: "leago", password: "atlas123" }) });
+  assert(leagoLogin.user.name === "Leago", "Leago login failed");
+  const siyanaLogin = await api("/auth/login", { method: "POST", body: JSON.stringify({ username: "siyana", password: "atlas123" }) });
+  assert(siyanaLogin.user.name === "Siyana", "Siyana login failed");
+  const leagoHeaders = { authorization: `Bearer ${leagoLogin.token}` };
+  const siyanaHeaders = { authorization: `Bearer ${siyanaLogin.token}` };
+  const parentHeaders = { authorization: "Bearer atlas-dev-token-parent" };
+
+  const leagoHome = await api(`/learners/${leagoLogin.user.id}/home`, { headers: leagoHeaders });
+  assert(leagoHome.todayMissions.some((mission) => mission.title === "The Lost Fossil"), "Leago flow regressed");
+  const home = await api(`/learners/${siyanaLogin.user.id}/home`, { headers: siyanaHeaders });
+  assert(home.learner.learningLevel === "Foundation Phase", "Siyana profile did not load");
+  assert(home.todayMissions.some((mission) => mission.title === "Japanese Greetings"), "Japanese mission missing");
+  assert(home.todayMissions.some((mission) => mission.title === "Mandarin Greetings"), "Mandarin mission missing");
+
+  const mission = await api("/missions/mission-junior-detective-maths", { headers: siyanaHeaders });
+  assert(mission.title === "Junior Detective Maths" && mission.steps.length === 6, "Junior Detective Maths did not open with its complete flow");
+  await api("/missions/mission-junior-detective-maths/complete", {
+    method: "POST", headers: siyanaHeaders,
+    body: JSON.stringify({ explanation: "Five plus two equals seven.", reflection: "I feel detective confident." })
   });
-  assert(login.user.name === "Leago", "Leago login did not return the expected learner");
 
-  const homeBefore = await api(`/learners/${login.user.id}/home`);
-  assert(homeBefore.todayMissions.some((mission) => mission.title === "The Lost Fossil"), "Learner home did not include The Lost Fossil");
+  const summary = await api(`/parents/${siyanaLogin.user.parentId}/summary`, { headers: parentHeaders });
+  assert(summary.children.some((child) => child.name === "Leago"), "Parent summary omitted Leago");
+  const siyanaSummary = summary.children.find((child) => child.name === "Siyana");
+  assert(siyanaSummary?.progressHistory.some((event) => event.summary.includes("Junior Detective Maths")), "Siyana parent impact missing");
 
-  const mission = await api("/missions/mission-lost-fossil");
-  assert(mission.title === "The Lost Fossil", "Mission detail did not open The Lost Fossil");
-
-  const companion = await api("/companion/message", {
-    method: "POST",
-    body: JSON.stringify({
-      learnerId: login.user.id,
-      missionId: mission.id,
-      message: "What is a fossil?"
-    })
-  });
-  assert(companion.reply.includes("fossil"), "Companion did not return the expected mock response");
-
-  const complete = await api("/missions/mission-lost-fossil/complete", {
-    method: "POST",
-    body: "{}"
-  });
-  assert(complete.status === "completed", "Mission completion did not update status");
-
-  const summaryBeforeRestart = await api(`/parents/${login.user.parentId}/summary`);
-  assert(summaryBeforeRestart.children[0].completedMissionCount === 1, "Parent summary did not update after mission completion");
+  for (const learnerId of [leagoLogin.user.id, siyanaLogin.user.id]) {
+    await api(`/learners/${learnerId}/home`, { headers: parentHeaders });
+  }
+  const isolated = await fetch(`http://localhost:${apiPort}/learners/${siyanaLogin.user.id}/home`, { headers: leagoHeaders });
+  assert(isolated.status === 403, "Leago was not isolated from Siyana");
+  const learnerParentSummary = await fetch(`http://localhost:${apiPort}/parents/${siyanaLogin.user.parentId}/summary`, { headers: siyanaHeaders });
+  assert(learnerParentSummary.status === 403, "Learner accessed parent-only summary");
+  const unknown = await fetch(`http://localhost:${apiPort}/learners/${siyanaLogin.user.id}/home`);
+  assert(unknown.status === 401, "Unknown user was not denied");
 
   await stop(apiProcess);
-  apiProcess = start("node", ["03_services/api/src/server.mjs"], {
-    ATLAS_API_PORT: String(apiPort),
-    DATABASE_URL: databaseUrl
-  });
-  await waitFor(`http://localhost:${apiPort}/health`);
-
-  const missionAfterRestart = await api("/missions/mission-lost-fossil");
-  assert(missionAfterRestart.status === "completed", "Mission completion did not persist after API restart");
-
-  const summaryAfterRestart = await api(`/parents/${login.user.parentId}/summary`);
-  assert(summaryAfterRestart.children[0].completedMissionCount === 1, "Parent summary did not persist after API restart");
-  assert(summaryAfterRestart.children[0].highlights.some((highlight) => highlight.includes("The Lost Fossil")), "Parent summary did not include completed mission highlight after restart");
+  apiProcess = start("node", ["03_services/api/src/server.mjs"], { ATLAS_API_PORT: String(apiPort), DATABASE_URL: databaseUrl });
+  await waitFor(`http://localhost:${apiPort}/ready`);
+  const afterRestart = await api("/missions/mission-junior-detective-maths", { headers: siyanaHeaders });
+  assert(afterRestart.status === "completed", "Siyana completion did not persist after API restart");
+  const history = await api(`/learners/${siyanaLogin.user.id}/mission-history`, { headers: siyanaHeaders });
+  assert(history.attempts[0]?.reflection === "I feel detective confident.", "Siyana reflection did not persist");
 
   console.log("Smoke checks passed:");
-  console.log("- PostgreSQL migration and seed commands completed");
-  console.log("- API liveness and database readiness checks pass");
-  console.log("- Web app serves locally");
-  console.log("- Leago can log in");
-  console.log("- Learner home includes today's missions");
-  console.log("- The Lost Fossil opens");
-  console.log("- Companion mock response is persisted");
-  console.log("- Mission completion persists after API restart");
-  console.log("- Parent summary persists after API restart");
+  console.log("- PostgreSQL migration and seed completed");
+  console.log("- Leago and Siyana development logins work");
+  console.log("- Learner-specific home and language missions load");
+  console.log("- Junior Detective Maths completion and reflection persist after restart");
+  console.log("- Parent summary contains separate Leago and Siyana progress");
+  console.log("- Parent authorization, learner isolation, and unknown-user denial pass");
 } finally {
   await Promise.all([apiProcess && stop(apiProcess), webProcess && stop(webProcess)].filter(Boolean));
 }

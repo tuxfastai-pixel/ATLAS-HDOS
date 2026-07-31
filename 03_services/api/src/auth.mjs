@@ -1,13 +1,17 @@
 // PEOS identity verification will replace this resolver at this isolated boundary.
-// Sprint 004 deliberately keeps routes and the existing development token compatible.
+// Development-only identities are intentionally isolated here. PEOS will replace
+// this resolver before production; these tokens are not production authentication.
+const developmentIdentities = new Map([
+  ["atlas-dev-token-leago", { subject: "learner-leago", role: "learner", source: "development" }],
+  ["atlas-dev-token-siyana", { subject: "learner-siyana", role: "learner", source: "development" }],
+  ["atlas-dev-token-parent", { subject: "parent-siyana", role: "parent", source: "development" }]
+]);
+
 export function resolveIdentity(req) {
-  const authorization = req.headers.authorization;
-  if (authorization === "Bearer atlas-dev-token-leago") {
-    return { subject: "learner-leago", role: "learner", source: "development" };
-  }
-  return null;
+  const match = /^Bearer (.+)$/.exec(req.headers.authorization || "");
+  return match ? developmentIdentities.get(match[1]) || null : null;
 }
 
 export function authenticationBoundary(req) {
-  return { identity: resolveIdentity(req) };
+  return resolveIdentity(req);
 }
