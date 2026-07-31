@@ -83,6 +83,7 @@ let webProcess;
 
 try {
   await run("node", ["03_services/api/src/db/migrate.mjs"], { DATABASE_URL: databaseUrl });
+  await run("node", ["03_services/api/src/db/migrate.mjs"], { DATABASE_URL: databaseUrl });
   await run("node", ["03_services/api/src/db/seed.mjs"], { DATABASE_URL: databaseUrl });
 
   apiProcess = start("node", ["03_services/api/src/server.mjs"], {
@@ -101,7 +102,9 @@ try {
   assert(siyanaLogin.user.name === "Siyana", "Siyana login failed");
   const leagoHeaders = { authorization: `Bearer ${leagoLogin.token}` };
   const siyanaHeaders = { authorization: `Bearer ${siyanaLogin.token}` };
-  const parentHeaders = { authorization: "Bearer atlas-dev-token-parent" };
+  const parentLogin = await api("/auth/login", { method: "POST", body: JSON.stringify({ username: "parent", password: "atlas-parent-123" }) });
+  assert(parentLogin.user.role === "parent", "Parent login failed");
+  const parentHeaders = { authorization: `Bearer ${parentLogin.token}` };
 
   const leagoHome = await api(`/learners/${leagoLogin.user.id}/home`, { headers: leagoHeaders });
   assert(leagoHome.todayMissions.some((mission) => mission.title === "The Lost Fossil"), "Leago flow regressed");
@@ -111,16 +114,19 @@ try {
   assert(home.todayMissions.some((mission) => mission.title === "Mandarin Greetings"), "Mandarin mission missing");
 
   const mission = await api("/missions/mission-junior-detective-maths", { headers: siyanaHeaders });
-  assert(mission.title === "Junior Detective Maths" && mission.steps.length === 6, "Junior Detective Maths did not open with its complete flow");
-  await api("/missions/mission-junior-detective-maths/complete", {
-    method: "POST", headers: siyanaHeaders,
-    body: JSON.stringify({ explanation: "Five plus two equals seven.", reflection: "I feel detective confident." })
-  });
+  assert(mission.title === "Junior Detective Maths" && mission.steps.length === 7, "Junior Detective Maths did not open with its complete flow");
+  const siyanaAttempt = await api("/missions/mission-junior-detective-maths/attempts/start", { method: "POST", headers: siyanaHeaders, body: "{}" });
+  await api(`/attempts/${siyanaAttempt.id}`, { method: "PATCH", headers: siyanaHeaders, body: JSON.stringify({ currentStep: 3, completedSteps: [0,1,2], responses: { answer: 7 } }) });
+  const siyanaResume = await api("/missions/mission-junior-detective-maths/attempts/latest", { headers: siyanaHeaders });
+  assert(siyanaResume.currentStep === 3, "Siyana did not resume at the saved step");
+  const leagoAttempt = await api("/missions/mission-lost-fossil/attempts/start", { method: "POST", headers: leagoHeaders, body: "{}" });
+  await api(`/attempts/${leagoAttempt.id}`, { method: "PATCH", headers: leagoHeaders, body: JSON.stringify({ currentStep: 2, completedSteps: [0,1], responses: { short_text: "Fossils preserve evidence." } }) });
+  assert((await api("/missions/mission-lost-fossil/attempts/latest", { headers: leagoHeaders })).currentStep === 2, "Leago did not resume");
 
   const summary = await api(`/parents/${siyanaLogin.user.parentId}/summary`, { headers: parentHeaders });
   assert(summary.children.some((child) => child.name === "Leago"), "Parent summary omitted Leago");
   const siyanaSummary = summary.children.find((child) => child.name === "Siyana");
-  assert(siyanaSummary?.progressHistory.some((event) => event.summary.includes("Junior Detective Maths")), "Siyana parent impact missing");
+  assert(siyanaSummary?.currentMission?.title === "Junior Detective Maths" && siyanaSummary.currentMission.percentage > 0, "Siyana in-progress parent impact missing");
 
   for (const learnerId of [leagoLogin.user.id, siyanaLogin.user.id]) {
     await api(`/learners/${learnerId}/home`, { headers: parentHeaders });
@@ -135,16 +141,23 @@ try {
   await stop(apiProcess);
   apiProcess = start("node", ["03_services/api/src/server.mjs"], { ATLAS_API_PORT: String(apiPort), DATABASE_URL: databaseUrl });
   await waitFor(`http://localhost:${apiPort}/ready`);
+  const resumedAfterRestart = await api("/missions/mission-junior-detective-maths/attempts/latest", { headers: siyanaHeaders });
+  assert(resumedAfterRestart.currentStep === 3 && resumedAfterRestart.responses.answer === 7, "Saved progress did not survive restart");
+  await api(`/attempts/${resumedAfterRestart.id}/complete`, { method: "POST", headers: siyanaHeaders, body: JSON.stringify({ currentStep: 6, completedSteps: [0,1,2,3,4,5,6], responses: { answer: 7, explanation: "I added five and two.", confidence: "I understand" }, explanation: "Five plus two equals seven.", reflection: "I understand" }) });
+  await stop(apiProcess);
+  apiProcess = start("node", ["03_services/api/src/server.mjs"], { ATLAS_API_PORT: String(apiPort), DATABASE_URL: databaseUrl });
+  await waitFor(`http://localhost:${apiPort}/ready`);
   const afterRestart = await api("/missions/mission-junior-detective-maths", { headers: siyanaHeaders });
-  assert(afterRestart.status === "completed", "Siyana completion did not persist after API restart");
-  const history = await api(`/learners/${siyanaLogin.user.id}/mission-history`, { headers: siyanaHeaders });
-  assert(history.attempts[0]?.reflection === "I feel detective confident.", "Siyana reflection did not persist");
+  assert(afterRestart.status === "completed", "Completion did not survive restart");
+  const finalSummary = await api(`/parents/${parentLogin.user.id}/summary`, { headers: parentHeaders });
+  assert(finalSummary.children.find((child) => child.name === "Leago")?.currentMission?.percentage > 0, "Parent summary omitted in-progress state");
+  assert(finalSummary.children.find((child) => child.name === "Siyana")?.mostRecentCompletedMission === "Junior Detective Maths", "Parent summary omitted completion");
 
   console.log("Smoke checks passed:");
-  console.log("- PostgreSQL migration and seed completed");
-  console.log("- Leago and Siyana development logins work");
+  console.log("- migration ledger rerun and PostgreSQL seed completed");
+  console.log("- Leago, Siyana, and parent development logins work");
   console.log("- Learner-specific home and language missions load");
-  console.log("- Junior Detective Maths completion and reflection persist after restart");
+  console.log("- both guided missions resume; progress and completion persist after restarts");
   console.log("- Parent summary contains separate Leago and Siyana progress");
   console.log("- Parent authorization, learner isolation, and unknown-user denial pass");
 } finally {

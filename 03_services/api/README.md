@@ -38,3 +38,11 @@ one another's home, mission detail, or mission history.
 ## Commands
 
 From the repository root, run `npm test` for automated API hardening tests and `npm run smoke` for the PostgreSQL-backed end-to-end flow. Database setup uses `npm run migrate` followed by `npm run seed`.
+
+## Guided mission attempts (Sprint 006)
+
+Development login accepts `leago` / `atlas123`, `siyana` / `atlas123`, and the explicit parent credentials `parent` / `atlas-parent-123`. These credentials and returned bearer tokens are development-only; PEOS continues to own production identity.
+
+Learners start or resume with `POST /missions/:missionId/attempts/start`, retrieve the latest resumable attempt with `GET /missions/:missionId/attempts/latest`, save with `PATCH /attempts/:attemptId`, and finish with `POST /attempts/:attemptId/complete`. Ownership and learner-role checks apply to every mutation, and completed attempts are immutable.
+
+`npm run migrate` uses the ordered `schema_migrations` ledger and safely skips applied SQL files. `npm run test:browser` performs lightweight browser-surface contract checks; it does not require a bundled browser runtime.
