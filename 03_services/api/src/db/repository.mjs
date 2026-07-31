@@ -26,7 +26,9 @@ export async function findLearnerByCredentials(username, password) {
 export async function getLearnerById(learnerId) {
   const result = await query(
     `
-      SELECT id, parent_id, username, display_name, grade, journey
+      SELECT id, parent_id, username, display_name, grade, journey, learning_level,
+             primary_language, secondary_language, international_language,
+             interests, focus_areas, next_focus, family_mission, companion_message
       FROM learners
       WHERE id = $1
       LIMIT 1
@@ -35,6 +37,11 @@ export async function getLearnerById(learnerId) {
   );
 
   return result.rows[0] || null;
+}
+
+export async function parentOwnsLearner(parentId, learnerId) {
+  const result = await query("SELECT 1 FROM learners WHERE parent_id = $1 AND id = $2 LIMIT 1", [parentId, learnerId]);
+  return result.rowCount === 1;
 }
 
 export async function getLearnerHome(learnerId) {
@@ -70,9 +77,17 @@ export async function getLearnerHome(learnerId) {
       id: learner.id,
       name: learner.display_name,
       grade: learner.grade,
-      journey: learner.journey
+      journey: learner.journey,
+      learningLevel: learner.learning_level,
+      languages: {
+        primary: learner.primary_language,
+        secondary: learner.secondary_language,
+        international: learner.international_language
+      },
+      interests: learner.interests,
+      focusAreas: learner.focus_areas
     },
-    companionMessage: "Ready for today's fossil expedition?",
+    companionMessage: learner.companion_message,
     todayMissions: missionsResult.rows.map((mission) => ({
       id: mission.id,
       title: mission.title,
@@ -140,16 +155,24 @@ export async function getMissionDetail(missionId) {
   };
 }
 
-export async function completeMission(missionId) {
+export async function completeMission(missionId, { explanation = "Completed during the mission.", reflection = "Ready to keep learning." } = {}) {
   const result = await query(
     `
-      UPDATE missions
-      SET status = 'completed',
-          completed_at = COALESCE(completed_at, NOW())
-      WHERE id = $1
-      RETURNING id, status
+      WITH completed AS (
+        UPDATE missions SET status = 'completed', completed_at = COALESCE(completed_at, NOW())
+        WHERE id = $1 RETURNING id, learner_id, title, status
+      ), attempt AS (
+        INSERT INTO mission_attempts (mission_id, learner_id, status, explanation, reflection)
+        SELECT id, learner_id, 'completed', $2, $3 FROM completed
+        RETURNING id
+      ), event AS (
+        INSERT INTO progress_events (learner_id, mission_id, event_type, summary)
+        SELECT learner_id, id, 'mission_completed', 'Completed ' || title FROM completed
+      )
+      SELECT completed.id, completed.learner_id, completed.status, attempt.id AS attempt_id
+      FROM completed CROSS JOIN attempt
     `,
-    [missionId]
+    [missionId, explanation, reflection]
   );
 
   return result.rows[0] || null;
@@ -198,6 +221,8 @@ export async function getParentSummary(parentId) {
         learners.display_name,
         COUNT(missions.id)::int AS total_mission_count,
         COUNT(missions.id) FILTER (WHERE missions.status = 'completed')::int AS completed_mission_count,
+        learners.next_focus,
+        learners.family_mission,
         COALESCE(
           ARRAY_AGG(missions.title ORDER BY missions.completed_at ASC)
             FILTER (WHERE missions.status = 'completed'),
@@ -207,10 +232,16 @@ export async function getParentSummary(parentId) {
       LEFT JOIN missions
         ON missions.learner_id = learners.id
       WHERE learners.parent_id = $1
-      GROUP BY learners.id, learners.display_name
+      GROUP BY learners.id, learners.display_name, learners.next_focus, learners.family_mission
       ORDER BY learners.display_name ASC
     `,
     [parentId]
+  );
+
+  const historyResult = await query(
+    `SELECT learner_id, event_type, summary, created_at FROM progress_events
+     WHERE learner_id IN (SELECT id FROM learners WHERE parent_id = $1)
+     ORDER BY created_at DESC`, [parentId]
   );
 
   return {
@@ -223,8 +254,22 @@ export async function getParentSummary(parentId) {
       highlights: child.completed_titles.length
         ? child.completed_titles.map((title) => `Completed ${title}`)
         : ["No missions completed yet today"],
-      familyMission: "Compare three rocks at home and describe what makes each one different."
+      nextFocus: child.next_focus,
+      familyMission: child.family_mission,
+      progressHistory: historyResult.rows.filter((event) => event.learner_id === child.id).map((event) => ({
+        type: event.event_type, summary: event.summary, createdAt: event.created_at
+      }))
     }))
   };
 }
 
+export async function getMissionAttempts(learnerId) {
+  const result = await query(
+    `SELECT mission_id, status, explanation, reflection, created_at
+     FROM mission_attempts WHERE learner_id = $1 ORDER BY created_at DESC`, [learnerId]
+  );
+  return result.rows.map((row) => ({
+    missionId: row.mission_id, status: row.status, explanation: row.explanation,
+    reflection: row.reflection, createdAt: row.created_at
+  }));
+}
