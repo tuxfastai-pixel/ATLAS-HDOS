@@ -23,6 +23,13 @@ export async function findLearnerByCredentials(username, password) {
   return result.rows[0] || null;
 }
 
+export async function findParentByCredentials(username, password) {
+  const result = await query(`SELECT parents.id, parents.name, parent_credentials.username
+    FROM parents JOIN parent_credentials ON parent_credentials.parent_id = parents.id
+    WHERE lower(parent_credentials.username) = lower($1) AND parent_credentials.password_dev_only = $2 LIMIT 1`, [username, password]);
+  return result.rows[0] || null;
+}
+
 export async function getLearnerById(learnerId) {
   const result = await query(
     `
@@ -199,68 +206,21 @@ export async function saveCompanionMessage({ learnerId, missionId, message, repl
 }
 
 export async function getParentSummary(parentId) {
-  const parentResult = await query(
-    `
-      SELECT id, name
-      FROM parents
-      WHERE id = $1
-      LIMIT 1
-    `,
-    [parentId]
-  );
+  const parentResult = await query("SELECT id, name FROM parents WHERE id=$1 LIMIT 1", [parentId]);
   const parent = parentResult.rows[0];
-
-  if (!parent) {
-    return null;
-  }
-
-  const childrenResult = await query(
-    `
-      SELECT
-        learners.id,
-        learners.display_name,
-        COUNT(missions.id)::int AS total_mission_count,
-        COUNT(missions.id) FILTER (WHERE missions.status = 'completed')::int AS completed_mission_count,
-        learners.next_focus,
-        learners.family_mission,
-        COALESCE(
-          ARRAY_AGG(missions.title ORDER BY missions.completed_at ASC)
-            FILTER (WHERE missions.status = 'completed'),
-          ARRAY[]::text[]
-        ) AS completed_titles
-      FROM learners
-      LEFT JOIN missions
-        ON missions.learner_id = learners.id
-      WHERE learners.parent_id = $1
-      GROUP BY learners.id, learners.display_name, learners.next_focus, learners.family_mission
-      ORDER BY learners.display_name ASC
-    `,
-    [parentId]
-  );
-
-  const historyResult = await query(
-    `SELECT learner_id, event_type, summary, created_at FROM progress_events
-     WHERE learner_id IN (SELECT id FROM learners WHERE parent_id = $1)
-     ORDER BY created_at DESC`, [parentId]
-  );
-
-  return {
-    parent: { id: parent.id, name: parent.name },
-    children: childrenResult.rows.map((child) => ({
-      id: child.id,
-      name: child.display_name,
-      completedMissionCount: child.completed_mission_count,
-      activeMissionCount: child.total_mission_count - child.completed_mission_count,
-      highlights: child.completed_titles.length
-        ? child.completed_titles.map((title) => `Completed ${title}`)
-        : ["No missions completed yet today"],
-      nextFocus: child.next_focus,
-      familyMission: child.family_mission,
-      progressHistory: historyResult.rows.filter((event) => event.learner_id === child.id).map((event) => ({
-        type: event.event_type, summary: event.summary, createdAt: event.created_at
-      }))
-    }))
-  };
+  if (!parent) return null;
+  const children = await query(`SELECT l.id, l.display_name, l.next_focus, l.family_mission,
+    (SELECT json_build_object('title',m.title,'percentage',
+      CASE WHEN cardinality(ms.completed_steps)=0 THEN 0 ELSE round(cardinality(ms.completed_steps)*100.0/(SELECT count(*) FROM mission_steps st WHERE st.mission_id=m.id)) END)
+      FROM mission_attempts ms JOIN missions m ON m.id=ms.mission_id WHERE ms.learner_id=l.id AND ms.status='in_progress' ORDER BY ms.last_saved_at DESC LIMIT 1) current_mission,
+    (SELECT m.title FROM mission_attempts ma JOIN missions m ON m.id=ma.mission_id WHERE ma.learner_id=l.id AND ma.status='completed' ORDER BY ma.completed_at DESC LIMIT 1) recent_completed,
+    (SELECT COALESCE(ma.response_data->>'confidence', ma.reflection) FROM mission_attempts ma WHERE ma.learner_id=l.id AND ma.status='completed' ORDER BY ma.completed_at DESC LIMIT 1) confidence
+    FROM learners l WHERE l.parent_id=$1 ORDER BY l.display_name`, [parentId]);
+  return { parent: { id: parent.id, name: parent.name }, children: children.rows.map((child) => ({
+    id: child.id, name: child.display_name, currentMission: child.current_mission,
+    mostRecentCompletedMission: child.recent_completed, confidenceReflection: child.confidence,
+    nextFocus: child.next_focus, familyMission: child.family_mission
+  })) };
 }
 
 export async function getMissionAttempts(learnerId) {
@@ -272,4 +232,53 @@ export async function getMissionAttempts(learnerId) {
     missionId: row.mission_id, status: row.status, explanation: row.explanation,
     reflection: row.reflection, createdAt: row.created_at
   }));
+}
+
+function attemptView(row) {
+  if (!row) return null;
+  return { id: Number(row.id), missionId: row.mission_id, learnerId: row.learner_id, status: row.status,
+    currentStep: row.current_step, completedSteps: row.completed_steps, responses: row.response_data,
+    startedAt: row.started_at, lastSavedAt: row.last_saved_at, completedAt: row.completed_at };
+}
+
+export async function startOrResumeAttempt(missionId, learnerId) {
+  const existing = await query(`SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
+    AND status='in_progress' ORDER BY last_saved_at DESC LIMIT 1`, [missionId, learnerId]);
+  if (existing.rowCount) return attemptView(existing.rows[0]);
+  const result = await query(`INSERT INTO mission_attempts
+    (mission_id, learner_id, status, current_step, completed_steps, response_data)
+    VALUES ($1,$2,'in_progress',0,ARRAY[]::INTEGER[],'{}'::JSONB) RETURNING *`, [missionId, learnerId]);
+  await query("UPDATE missions SET status='in_progress' WHERE id=$1 AND status <> 'completed'", [missionId]);
+  return attemptView(result.rows[0]);
+}
+
+export async function getLatestAttempt(missionId, learnerId) {
+  const result = await query(`SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
+    AND status='in_progress' ORDER BY last_saved_at DESC LIMIT 1`, [missionId, learnerId]);
+  return attemptView(result.rows[0]);
+}
+
+export async function getAttempt(attemptId) {
+  const result = await query("SELECT * FROM mission_attempts WHERE id=$1", [attemptId]);
+  return attemptView(result.rows[0]);
+}
+
+export async function saveAttempt(attemptId, { currentStep, completedSteps, responses }) {
+  const result = await query(`UPDATE mission_attempts SET current_step=$2, completed_steps=$3,
+    response_data=$4::jsonb, last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
+    [attemptId, currentStep, completedSteps, JSON.stringify(responses)]);
+  return attemptView(result.rows[0]);
+}
+
+export async function completeAttempt(attemptId, data) {
+  const result = await query(`UPDATE mission_attempts SET status='completed', current_step=$2,
+    completed_steps=$3, response_data=$4::jsonb, explanation=$5, reflection=$6,
+    last_saved_at=NOW(), completed_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
+    [attemptId, data.currentStep, data.completedSteps, JSON.stringify(data.responses), data.explanation, data.reflection]);
+  const attempt = result.rows[0];
+  if (!attempt) return null;
+  await query("UPDATE missions SET status='completed', completed_at=NOW() WHERE id=$1", [attempt.mission_id]);
+  await query(`INSERT INTO progress_events (learner_id, mission_id, event_type, summary)
+    SELECT learner_id, id, 'mission_completed', 'Completed ' || title FROM missions WHERE id=$1`, [attempt.mission_id]);
+  return attemptView(attempt);
 }

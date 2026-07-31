@@ -9,13 +9,19 @@ const auth = (token) => ({ authorization: `Bearer ${token}` });
 
 function repository(overrides = {}) {
   return {
-    findLearnerByCredentials: async (username) => username === "siyana" ? siyana : leago,
+    findLearnerByCredentials: async (username) => username === "parent" ? null : username === "siyana" ? siyana : leago,
+    findParentByCredentials: async (username) => username === "parent" ? { id: "parent-siyana", name: "Founding Parent", username: "parent" } : null,
     getLearnerHome: async (id) => ({ learner: { id }, todayMissions: id === siyana.id ? [{ title: "Junior Detective Maths" }] : [{ title: "The Lost Fossil" }] }),
-    getMissionDetail: async (id) => ({ id, learnerId: id.includes("detective") ? siyana.id : leago.id, title: id.includes("detective") ? "Junior Detective Maths" : "The Lost Fossil", steps: [] }),
+    getMissionDetail: async (id) => ({ id, learnerId: id.includes("detective") ? siyana.id : leago.id, title: id.includes("detective") ? "Junior Detective Maths" : "The Lost Fossil", steps: Array.from({ length: 7 }, (_, order) => ({ order })) }),
     completeMission: async (id, completion) => ({ id, learner_id: siyana.id, status: "completed", attempt_id: 1, ...completion }),
     saveCompanionMessage: async (record) => record,
     getParentSummary: async () => ({ parent: { id: "parent-siyana" }, children: [{ id: leago.id }, { id: siyana.id }] }),
     getMissionAttempts: async () => [],
+    startOrResumeAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 0, completedSteps: [], responses: {} }),
+    getLatestAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 2, completedSteps: [0,1], responses: { answer: 7 } }),
+    getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "in_progress" }),
+    saveAttempt: async (id, data) => ({ id, ...data, status: "in_progress" }),
+    completeAttempt: async (id, data) => ({ id, ...data, status: "completed" }),
     parentOwnsLearner: async (parentId, learnerId) => parentId === "parent-siyana" && [leago.id, siyana.id].includes(learnerId),
     ...overrides
   };
@@ -102,4 +108,35 @@ test("unexpected failures and logs do not leak sensitive values", async () => {
 });
 test("request logs contain metadata but not authorization", async () => {
   await withApi(async (origin, logs) => { await request(origin, "/health", { headers: auth("secret") }); assert.match(logs.join(" "), /"status":200/); assert.doesNotMatch(logs.join(" "), /Bearer secret/); });
+});
+
+
+test("parent development login returns a parent role", async () => {
+  await withApi(async (origin) => { const result=await request(origin,"/auth/login",{method:"POST",body:JSON.stringify({username:"parent",password:"atlas-parent-123"})}); assert.equal(result.body.user.role,"parent"); });
+});
+test("attempt start, save, resume, and complete use shared guided routes", async () => {
+  await withApi(async (origin) => { const headers=auth("atlas-dev-token-siyana");
+    assert.equal((await request(origin,"/missions/mission-junior-detective-maths/attempts/start",{method:"POST",headers,body:"{}"})).body.status,"in_progress");
+    const progress={currentStep:2,completedSteps:[0,1],responses:{answer:7}};
+    assert.equal((await request(origin,"/attempts/41",{method:"PATCH",headers,body:JSON.stringify(progress)})).body.currentStep,2);
+    assert.equal((await request(origin,"/missions/mission-junior-detective-maths/attempts/latest",{headers})).body.currentStep,2);
+    const done={...progress,explanation:"I added five and two.",reflection:"I understand"};
+    assert.equal((await request(origin,"/attempts/41/complete",{method:"POST",headers,body:JSON.stringify(done)})).body.status,"completed");
+  });
+});
+test("attempt validation and ownership prevent unsafe changes", async () => {
+  await withApi(async (origin) => {
+    assertError(await request(origin,"/attempts/41",{method:"PATCH",headers:auth("atlas-dev-token-leago"),body:JSON.stringify({currentStep:0,completedSteps:[],responses:{}})}),403,"UNAUTHORIZED");
+    assertError(await request(origin,"/attempts/41",{method:"PATCH",headers:auth("atlas-dev-token-parent"),body:JSON.stringify({currentStep:0,completedSteps:[],responses:{}})}),403,"UNAUTHORIZED");
+    assertError(await request(origin,"/attempts/41",{method:"PATCH",headers:auth("atlas-dev-token-siyana"),body:JSON.stringify({currentStep:99,completedSteps:[],responses:{}})}),400,"VALIDATION_ERROR");
+  });
+});
+test("completed attempts cannot be modified", async () => {
+  await withApi(async (origin) => assertError(await request(origin,"/attempts/41",{method:"PATCH",headers:auth("atlas-dev-token-siyana"),body:JSON.stringify({currentStep:0,completedSteps:[],responses:{}})}),409,"CONFLICT"), { repository:{getAttempt:async()=>({id:41,missionId:"mission-junior-detective-maths",learnerId:siyana.id,status:"completed"})} });
+});
+test("Siyana response validation rejects invalid answers and confidence", async () => {
+  await withApi(async (origin) => { const headers=auth("atlas-dev-token-siyana");
+    assertError(await request(origin,"/attempts/41",{method:"PATCH",headers,body:JSON.stringify({currentStep:1,completedSteps:[0],responses:{answer:"seven"}})}),400,"VALIDATION_ERROR");
+    assertError(await request(origin,"/attempts/41",{method:"PATCH",headers,body:JSON.stringify({currentStep:1,completedSteps:[0],responses:{confidence:"perfect"}})}),400,"VALIDATION_ERROR");
+  });
 });
