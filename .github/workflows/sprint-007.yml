@@ -1,4 +1,4 @@
-name: Sprint 007 verification
+name: Sprint 008 verification
 on: [push, pull_request]
 jobs:
   verify:
@@ -26,5 +26,6 @@ jobs:
       - run: npm run migrate
       - run: npm run seed
       - run: npm test
+      - run: node --test Testing/browser/*.test.mjs
       - run: npm run test:browser
       - run: npm run smoke
