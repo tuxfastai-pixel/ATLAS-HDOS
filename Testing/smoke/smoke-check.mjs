@@ -252,7 +252,30 @@ try {
   apiProcess = start("node", ["03_services/api/src/server.mjs"], { ATLAS_API_PORT: String(apiPort), DATABASE_URL: databaseUrl });
   await waitFor(`http://localhost:${apiPort}/ready`);
   const afterRestart = await api("/missions/mission-junior-detective-maths", { headers: siyanaHeaders });
-  assert(afterRestart.status === "completed", "Completion did not survive restart");
+  assert(
+    afterRestart.status === "in_progress",
+    "Active retry state did not survive restart"
+  );
+  const siyanaHistoryAfterRestart = await api(
+    `/learners/${siyanaLogin.user.id}/mission-history`,
+    { headers: siyanaHeaders }
+  );
+  assert(
+    siyanaHistoryAfterRestart.attempts.some(
+      (attempt) =>
+        attempt.id === resumedAfterRestart.id &&
+        attempt.status === "completed"
+    ),
+    "Original completed attempt did not survive restart"
+  );
+  assert(
+    siyanaHistoryAfterRestart.attempts.some(
+      (attempt) =>
+        attempt.id === growthFailureAttempt.id &&
+        attempt.status === "in_progress"
+    ),
+    "Rolled-back retry attempt did not survive restart"
+  );
   const growthAfterRestart = await api(`/learners/${siyanaLogin.user.id}/growth-dna`, { headers: siyanaHeaders });
   const observationsAfterRestart = await api(`/learners/${siyanaLogin.user.id}/observations`, { headers: siyanaHeaders });
   assert(growthAfterRestart.dimensions.some((dimension) => dimension.dimension === "numeracy" && dimension.evidenceCount === numeracyProfile.rows[0].evidence_count), "Growth DNA profile did not survive API restart");
