@@ -67,18 +67,27 @@ INSERT INTO mission_objectives (mission_id, objective_order, objective_text) VAL
  ('mission-mandarin-greetings',2,'Connect kind words with family, animals, and school.');
 
 INSERT INTO mission_steps (mission_id, step_order, step_type, title, instruction) VALUES
- ('mission-lost-fossil',1,'warmup','Remember','What is a fossil? Write or say one idea before reading.'),
- ('mission-lost-fossil',2,'reading','Read','Read the fossil story and identify the clue that helped the explorer.'),
- ('mission-lost-fossil',3,'reflection','Reflect','What surprised you about the fossil discovery?'),
- ('mission-junior-detective-maths',1,'warmup','Warm-up','Count five paw prints, then count two more.'),
- ('mission-junior-detective-maths',2,'reading','Read the mystery','A puppy left 5 paw prints by the gate and 2 by the tree. How many paw prints are there altogether?'),
- ('mission-junior-detective-maths',3,'mathematics','Solve the clue','Use counters, fingers, or a drawing to solve 5 + 2.'),
- ('mission-junior-detective-maths',4,'explanation','Explain your answer','Tell how you know the answer is 7.'),
- ('mission-junior-detective-maths',5,'reflection','Confidence reflection','Choose how you feel: still learning, getting confident, or detective confident.'),
- ('mission-junior-detective-maths',6,'celebration','Celebrate','Case solved! Celebrate your careful thinking and kind detective work.'),
+ ('mission-lost-fossil',1,'short_text','Warm-up recall','What do you already know about fossils?'),
+ ('mission-lost-fossil',2,'reading','Read the fossil story','A young explorer finds a shell shape pressed into ancient rock. Read the clue carefully.'),
+ ('mission-lost-fossil',3,'short_text','Speech practice','Write the key sentence you would practise saying aloud.'),
+ ('mission-lost-fossil',4,'choice','Japanese vocabulary','Choose the Japanese word for fossil: kaseki.'),
+ ('mission-lost-fossil',5,'choice','Mandarin vocabulary','Choose the Mandarin word for fossil: huàshí.'),
+ ('mission-lost-fossil',6,'reflection','Science reflection','Explain what the fossil evidence tells us and reflect on your learning.'),
+ ('mission-lost-fossil',7,'celebration','Completion celebration','Expedition complete! Review your work and finish the mission.'),
+ ('mission-junior-detective-maths',1,'choice','Welcome and warm-up','Welcome, Detective! Count five paw prints, then two more.'),
+ ('mission-junior-detective-maths',2,'reading','Read the mystery','A puppy left 5 paw prints by the gate and 2 by the tree. How many are there altogether?'),
+ ('mission-junior-detective-maths',3,'number','Solve the maths problem','Use counters, fingers, or a drawing to solve 5 + 2.'),
+ ('mission-junior-detective-maths',4,'number','Select or enter the answer','Enter the number of paw prints altogether.'),
+ ('mission-junior-detective-maths',5,'short_text','Explain your answer','Write one short sentence about how you found the answer.'),
+ ('mission-junior-detective-maths',6,'confidence','Confidence reflection','Choose how confident you feel about your maths thinking.'),
+ ('mission-junior-detective-maths',7,'celebration','Celebration and completion','Case solved! Review your clues and complete the mission.'),
  ('mission-japanese-greetings',1,'greeting','Hello','Say “Konnichiwa”. It is a friendly hello.'),
- ('mission-japanese-greetings',2,'name','My name','Say “Watashi wa Siyana desu” to share your name. Speaking is enough; no writing system practice is needed.'),
- ('mission-japanese-greetings',3,'context','Kind connections','Greet a family member, an animal friend, or someone at school, then add a kind smile.'),
+ ('mission-japanese-greetings',2,'name','My name','Say “Watashi wa Siyana desu” to share your name.'),
+ ('mission-japanese-greetings',3,'context','Kind connections','Greet someone, then add a kind smile.'),
  ('mission-mandarin-greetings',1,'greeting','Hello','Say “Nǐ hǎo”. It is a friendly hello.'),
- ('mission-mandarin-greetings',2,'name','My name','Say “Wǒ jiào Siyana” to share your name. Speaking is enough; characters are not required.'),
- ('mission-mandarin-greetings',3,'context','Kind connections','Greet a family member, an animal friend, or someone at school, then practise “xièxie” for thank you.');
+ ('mission-mandarin-greetings',2,'name','My name','Say “Wǒ jiào Siyana” to share your name.'),
+ ('mission-mandarin-greetings',3,'context','Kind connections','Practise “xièxie” for thank you.');
+
+INSERT INTO parent_credentials (parent_id, username, password_dev_only)
+VALUES ('parent-siyana', 'parent', 'atlas-parent-123')
+ON CONFLICT (parent_id) DO UPDATE SET username=EXCLUDED.username, password_dev_only=EXCLUDED.password_dev_only;

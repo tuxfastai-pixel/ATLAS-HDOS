@@ -7,7 +7,7 @@ import { optionalIdentifier, readJson, rejectQueryParameters, requireStrings, va
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
   "access-control-allow-headers": "content-type,authorization,x-request-id"
 };
 
@@ -53,9 +53,12 @@ export async function routeRequest(req, url, dependencies = {}) {
 
   if (req.method === "POST" && url.pathname === "/auth/login") {
     const { username, password } = requireStrings(await readJson(req), ["username", "password"]);
-    const learner = await db.findLearnerByCredentials(username.toLowerCase(), password);
-    if (!learner) throw new ApiError("UNAUTHENTICATED", "Authentication required");
-    return createResponse(200, { token: `atlas-dev-token-${learner.username}`, authentication: "development", user: { id: learner.id, name: learner.display_name, role: "learner", parentId: learner.parent_id } });
+    const normalized = username.toLowerCase();
+    const learner = await db.findLearnerByCredentials(normalized, password);
+    if (learner) return createResponse(200, { token: `atlas-dev-token-${learner.username}`, authentication: "development", user: { id: learner.id, name: learner.display_name, role: "learner", parentId: learner.parent_id } });
+    const parent = await db.findParentByCredentials(normalized, password);
+    if (!parent) throw new ApiError("UNAUTHENTICATED", "Authentication required");
+    return createResponse(200, { token: "atlas-dev-token-parent", authentication: "development", user: { id: parent.id, name: parent.name, role: "parent" } });
   }
 
   const homeMatch = url.pathname.match(/^\/learners\/([^/]+)\/home$/);
@@ -81,10 +84,60 @@ export async function routeRequest(req, url, dependencies = {}) {
     const detail = await db.getMissionDetail(missionId);
     if (!detail) throw new ApiError("NOT_FOUND", "Mission not found");
     await authorizeLearner(identity, detail.learnerId, db);
+    if (identity.role !== "learner") throw new ApiError("UNAUTHORIZED", "Learners alone can modify attempts");
     const completion = requireStrings(await readJson(req), ["explanation", "reflection"]);
     const mission = await db.completeMission(missionId, completion);
     if (!mission) throw new ApiError("NOT_FOUND", "Mission not found");
     return createResponse(200, { status: mission.status, missionId: mission.id, attemptId: mission.attempt_id, xpAwarded: 25, updatedDomains: detail.domains || [] });
+  }
+
+  const startMatch = url.pathname.match(/^\/missions\/([^/]+)\/attempts\/start$/);
+  if (req.method === "POST" && startMatch) {
+    const detail = await db.getMissionDetail(validateIdentifier(startMatch[1], "path", "missionId"));
+    if (!detail) throw new ApiError("NOT_FOUND", "Mission not found");
+    requireIdentity(identity);
+    if (identity.role !== "learner" || identity.subject !== detail.learnerId) throw new ApiError("UNAUTHORIZED", "Learners can modify only their own attempts");
+    return createResponse(200, await db.startOrResumeAttempt(detail.id, identity.subject));
+  }
+
+  const latestMatch = url.pathname.match(/^\/missions\/([^/]+)\/attempts\/latest$/);
+  if (req.method === "GET" && latestMatch) {
+    const detail = await db.getMissionDetail(validateIdentifier(latestMatch[1], "path", "missionId"));
+    if (!detail) throw new ApiError("NOT_FOUND", "Mission not found");
+    requireIdentity(identity);
+    if (identity.role !== "learner" || identity.subject !== detail.learnerId) throw new ApiError("UNAUTHORIZED", "Learners can resume only their own attempts");
+    const attempt = await db.getLatestAttempt(detail.id, identity.subject);
+    if (!attempt) throw new ApiError("NOT_FOUND", "No resumable attempt found");
+    return createResponse(200, attempt);
+  }
+
+  const attemptMatch = url.pathname.match(/^\/attempts\/(\d+)(\/complete)?$/);
+  if (attemptMatch && ((req.method === "PATCH" && !attemptMatch[2]) || (req.method === "POST" && attemptMatch[2]))) {
+    requireIdentity(identity);
+    if (identity.role !== "learner") throw new ApiError("UNAUTHORIZED", "Learners alone can modify attempts");
+    const attempt = await db.getAttempt(Number(attemptMatch[1]));
+    if (!attempt) throw new ApiError("NOT_FOUND", "Attempt not found");
+    if (attempt.learnerId !== identity.subject) throw new ApiError("UNAUTHORIZED", "Attempt ownership required");
+    if (attempt.status !== "in_progress") throw new ApiError("CONFLICT", "Completed or abandoned attempts cannot be modified");
+    const detail = await db.getMissionDetail(attempt.missionId);
+    const body = await readJson(req);
+    const currentStep = body.currentStep;
+    const completedSteps = body.completedSteps;
+    const responses = body.responses;
+    const invalid = !Number.isInteger(currentStep) || currentStep < 0 || currentStep >= detail.steps.length ||
+      !Array.isArray(completedSteps) || completedSteps.some((step) => !Number.isInteger(step) || step < 0 || step >= detail.steps.length) ||
+      !responses || Array.isArray(responses) || typeof responses !== "object";
+    if (invalid) throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "body", field: "progress", message: "Steps and responses must match the mission" }] });
+    const allowedConfidence = ["I need help", "I am getting it", "I understand", "I can explain it"];
+    if (responses.confidence !== undefined && !allowedConfidence.includes(responses.confidence)) throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "body", field: "responses.confidence", message: "Choose a supported confidence response" }] });
+    if (detail.id.includes("detective") && responses.answer !== undefined && (!Number.isInteger(responses.answer) || responses.answer < 0 || responses.answer > 100)) throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "body", field: "responses.answer", message: "Siyana's answer must be a number from 0 to 100" }] });
+    if (attemptMatch[2]) {
+      const completion = requireStrings(body, ["explanation", "reflection"]);
+      const completed = await db.completeAttempt(attempt.id, { currentStep, completedSteps, responses, ...completion });
+      if (!completed) throw new ApiError("CONFLICT", "Attempt can no longer be completed");
+      return createResponse(200, completed);
+    }
+    return createResponse(200, await db.saveAttempt(attempt.id, { currentStep, completedSteps: [...new Set(completedSteps)], responses }));
   }
 
   if (req.method === "POST" && url.pathname === "/companion/message") {

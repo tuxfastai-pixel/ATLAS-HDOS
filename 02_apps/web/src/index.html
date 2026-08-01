@@ -1,78 +1,10 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Atlas HDOS</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="app-shell">
-      <section id="login-screen" class="screen login-screen" aria-labelledby="login-title">
-        <div class="login-panel">
-          <p class="eyebrow">Atlas HDOS</p>
-          <h1 id="login-title">Learner Login</h1>
-          <form id="login-form" class="stack">
-            <label>
-              Username
-              <input id="username" name="username" autocomplete="username" value="leago" required />
-            </label>
-            <label>
-              Password
-              <input id="password" name="password" type="password" autocomplete="current-password" value="atlas123" required />
-            </label>
-            <button type="submit">Log In</button>
-            <p id="login-error" class="error" role="alert"></p>
-          </form>
-        </div>
-      </section>
-
-      <section id="workspace-screen" class="screen hidden" aria-live="polite">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Paleontology Expedition</p>
-            <h1 id="welcome-heading">Welcome</h1>
-          </div>
-        </header>
-
-        <div class="dashboard-grid">
-          <section class="panel" aria-labelledby="missions-heading">
-            <div class="section-header">
-              <div>
-                <p class="eyebrow">Learner Home</p>
-                <h2 id="missions-heading">Today's Missions</h2>
-              </div>
-              <span id="mission-count" class="status-pill">0 active</span>
-            </div>
-            <div id="missions-list" class="mission-list"></div>
-          </section>
-
-          <aside class="panel companion-panel" aria-labelledby="companion-heading">
-            <p class="eyebrow">Mock AI</p>
-            <h2 id="companion-heading">Atlas Companion</h2>
-            <div id="companion-thread" class="companion-thread"></div>
-            <form id="companion-form" class="companion-form">
-              <input id="companion-input" placeholder="Ask about the mission" aria-label="Ask Atlas Companion" />
-              <button type="submit">Ask</button>
-            </form>
-          </aside>
-
-          <section class="panel mission-detail" aria-labelledby="mission-heading">
-            <div class="section-header">
-              <div>
-                <p class="eyebrow">Mission Detail</p>
-                <h2 id="mission-heading">Select a mission</h2>
-              </div>
-              <button id="complete-mission" type="button" disabled>Complete Mission</button>
-            </div>
-            <p id="mission-summary" class="muted">Open The Lost Fossil to begin.</p>
-            <ol id="mission-steps" class="steps"></ol>
-          </section>
-
-        </div>
-      </section>
-    </main>
-
-    <script type="module" src="./app.js"></script>
-  </body>
-</html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Atlas HDOS Guided Missions</title><link rel="stylesheet" href="./styles.css"></head>
+<body><main class="app-shell">
+<section id="login-screen" class="screen login-screen" aria-labelledby="login-title"><div class="login-panel"><p class="eyebrow">Atlas HDOS · Development authentication</p><h1 id="login-title">Log in</h1><p class="muted">Learners and parents use their own username and password.</p><form id="login-form" class="stack"><label>Username<input id="username" name="username" autocomplete="username" required></label><label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label><button type="submit">Log in</button><p id="login-error" class="error" role="alert"></p></form></div></section>
+<section id="workspace-screen" class="screen hidden"><header class="topbar"><div><p class="eyebrow">Guided learning workspace</p><h1 id="welcome-heading">Welcome</h1></div></header><div class="dashboard-grid">
+<section class="panel" aria-labelledby="missions-heading"><div class="section-header"><div><p class="eyebrow">Learner home</p><h2 id="missions-heading">Today's missions</h2></div><span id="mission-count" class="status-pill">0 missions</span></div><div id="missions-list" class="mission-list"></div></section>
+<section id="player" class="panel mission-detail" aria-labelledby="mission-heading"><p class="eyebrow">Guided mission</p><h2 id="mission-heading">Select a mission</h2><p id="mission-summary" class="muted">Choose a mission to see its introduction.</p><div id="progress-area" class="hidden"><p id="step-indicator" class="step-indicator"></p><progress id="mission-progress" max="100" value="0">0%</progress><p id="progress-label">0% complete</p><article id="current-step" class="step" tabindex="-1"></article><p id="player-error" class="error" role="alert"></p><div class="player-actions"><button id="previous-step" type="button">Previous</button><button id="save-exit" type="button">Save and exit</button><button id="next-step" type="button">Next</button><button id="complete-mission" type="button" class="hidden">Complete mission</button></div></div></section>
+<aside class="panel companion-panel"><h2>Atlas Companion</h2><div id="companion-thread" class="companion-thread"></div><form id="companion-form" class="companion-form"><label class="sr-only" for="companion-input">Ask about the mission</label><input id="companion-input" placeholder="Ask about the mission"><button>Ask</button></form></aside>
+</div></section>
+<section id="parent-screen" class="screen hidden"><header class="topbar"><div><p class="eyebrow">Parent workspace</p><h1 id="parent-heading">Family learning summary</h1></div></header><div id="parent-summary" class="parent-grid"></div></section>
+</main><script type="module" src="./app.js"></script></body></html>
