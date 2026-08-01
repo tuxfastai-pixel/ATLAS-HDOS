@@ -1,4 +1,4 @@
-import { query } from "./client.mjs";
+import { query, withTransaction } from "./client.mjs";
 
 export async function findLearnerByCredentials(username, password) {
   const result = await query(
@@ -225,26 +225,36 @@ export async function getParentSummary(parentId) {
 
 export async function getMissionAttempts(learnerId) {
   const result = await query(
-    `SELECT mission_id, status, explanation, reflection, created_at
+    `SELECT id, mission_id, status, retry_of_attempt_id, retention_status,
+            created_at, completed_at, abandoned_at
      FROM mission_attempts WHERE learner_id = $1 ORDER BY created_at DESC`, [learnerId]
   );
   return result.rows.map((row) => ({
-    missionId: row.mission_id, status: row.status, explanation: row.explanation,
-    reflection: row.reflection, createdAt: row.created_at
+    id: Number(row.id), missionId: row.mission_id, status: row.status,
+    retryOfAttemptId: row.retry_of_attempt_id && Number(row.retry_of_attempt_id),
+    retentionStatus: row.retention_status, createdAt: row.created_at,
+    completedAt: row.completed_at, abandonedAt: row.abandoned_at
   }));
 }
 
 function attemptView(row) {
   if (!row) return null;
+  const redacted = row.retention_status === "redacted";
   return { id: Number(row.id), missionId: row.mission_id, learnerId: row.learner_id, status: row.status,
-    currentStep: row.current_step, completedSteps: row.completed_steps, responses: row.response_data,
-    startedAt: row.started_at, lastSavedAt: row.last_saved_at, completedAt: row.completed_at };
+    currentStep: row.current_step, completedSteps: row.completed_steps, responses: redacted ? {} : row.response_data,
+    retryOfAttemptId: row.retry_of_attempt_id && Number(row.retry_of_attempt_id),
+    retentionStatus: row.retention_status, retainedUntil: row.retained_until,
+    startedAt: row.started_at, lastSavedAt: row.last_saved_at, completedAt: row.completed_at,
+    abandonedAt: row.abandoned_at, deletedAt: row.deleted_at };
 }
 
 export async function startOrResumeAttempt(missionId, learnerId) {
   const existing = await query(`SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
     AND status='in_progress' ORDER BY last_saved_at DESC LIMIT 1`, [missionId, learnerId]);
   if (existing.rowCount) return attemptView(existing.rows[0]);
+  const completed = await query(`SELECT 1 FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
+    AND status='completed' LIMIT 1`, [missionId, learnerId]);
+  if (completed.rowCount) return null;
   const result = await query(`INSERT INTO mission_attempts
     (mission_id, learner_id, status, current_step, completed_steps, response_data)
     VALUES ($1,$2,'in_progress',0,ARRAY[]::INTEGER[],'{}'::JSONB) RETURNING *`, [missionId, learnerId]);
@@ -270,15 +280,55 @@ export async function saveAttempt(attemptId, { currentStep, completedSteps, resp
   return attemptView(result.rows[0]);
 }
 
-export async function completeAttempt(attemptId, data) {
-  const result = await query(`UPDATE mission_attempts SET status='completed', current_step=$2,
-    completed_steps=$3, response_data=$4::jsonb, explanation=$5, reflection=$6,
-    last_saved_at=NOW(), completed_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
-    [attemptId, data.currentStep, data.completedSteps, JSON.stringify(data.responses), data.explanation, data.reflection]);
-  const attempt = result.rows[0];
-  if (!attempt) return null;
-  await query("UPDATE missions SET status='completed', completed_at=NOW() WHERE id=$1", [attempt.mission_id]);
-  await query(`INSERT INTO progress_events (learner_id, mission_id, event_type, summary)
-    SELECT learner_id, id, 'mission_completed', 'Completed ' || title FROM missions WHERE id=$1`, [attempt.mission_id]);
-  return attemptView(attempt);
+export async function completeAttempt(attemptId, learnerId, data) {
+  return withTransaction(async (client) => {
+    const owned = await client.query("SELECT * FROM mission_attempts WHERE id=$1 AND learner_id=$2 FOR UPDATE", [attemptId, learnerId]);
+    if (!owned.rowCount || owned.rows[0].status !== "in_progress") return null;
+    const result = await client.query(`UPDATE mission_attempts SET status='completed', current_step=$2,
+      completed_steps=$3, response_data=$4::jsonb, explanation=$5, reflection=$6,
+      last_saved_at=NOW(), completed_at=NOW() WHERE id=$1 RETURNING *`,
+      [attemptId, data.currentStep, data.completedSteps, JSON.stringify(data.responses), data.explanation, data.reflection]);
+    const attempt = result.rows[0];
+    await client.query("UPDATE missions SET status='completed', completed_at=NOW() WHERE id=$1", [attempt.mission_id]);
+    if (process.env.NODE_ENV === "test" && process.env.ATLAS_TEST_COMPLETION_FAILURE === "after_attempt_update") {
+      throw new Error("Injected completion failure");
+    }
+    await client.query(`INSERT INTO progress_events (learner_id, mission_id, event_type, summary)
+      SELECT learner_id, id, 'mission_completed', 'Completed ' || title FROM missions WHERE id=$1`, [attempt.mission_id]);
+    return attemptView(attempt);
+  });
+}
+
+export async function abandonAttempt(attemptId) {
+  return withTransaction(async (client) => {
+    const result = await client.query(`UPDATE mission_attempts SET status='abandoned', abandoned_at=NOW(),
+      last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`, [attemptId]);
+    if (!result.rowCount) return null;
+    const attempt = result.rows[0];
+    const completed = await client.query("SELECT 1 FROM mission_attempts WHERE mission_id=$1 AND status='completed' LIMIT 1", [attempt.mission_id]);
+    if (!completed.rowCount) await client.query("UPDATE missions SET status='not_started', completed_at=NULL WHERE id=$1", [attempt.mission_id]);
+    return attemptView(attempt);
+  });
+}
+
+export async function retryAttempt(attemptId, learnerId) {
+  return withTransaction(async (client) => {
+    const original = await client.query("SELECT * FROM mission_attempts WHERE id=$1 AND learner_id=$2 AND status='completed' FOR SHARE", [attemptId, learnerId]);
+    if (!original.rowCount) return null;
+    const active = await client.query("SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2 AND status='in_progress' LIMIT 1", [original.rows[0].mission_id, learnerId]);
+    if (active.rowCount) return attemptView(active.rows[0]);
+    const result = await client.query(`INSERT INTO mission_attempts
+      (mission_id, learner_id, status, current_step, completed_steps, response_data, retry_of_attempt_id)
+      VALUES ($1,$2,'in_progress',0,ARRAY[]::INTEGER[],'{}'::jsonb,$3) RETURNING *`,
+      [original.rows[0].mission_id, learnerId, attemptId]);
+    await client.query("UPDATE missions SET status='in_progress' WHERE id=$1", [original.rows[0].mission_id]);
+    return attemptView(result.rows[0]);
+  });
+}
+
+export async function redactAttemptResponses(attemptId, deletionReason) {
+  const result = await query(`UPDATE mission_attempts SET response_data='{}'::jsonb, explanation=NULL,
+    reflection=NULL, retention_status='redacted', retained_until=NULL, deleted_at=NOW(), deletion_reason=$2
+    WHERE id=$1 AND retention_status <> 'redacted' RETURNING *`, [attemptId, deletionReason]);
+  return attemptView(result.rows[0]);
 }

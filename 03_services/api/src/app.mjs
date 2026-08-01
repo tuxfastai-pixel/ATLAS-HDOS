@@ -97,7 +97,9 @@ export async function routeRequest(req, url, dependencies = {}) {
     if (!detail) throw new ApiError("NOT_FOUND", "Mission not found");
     requireIdentity(identity);
     if (identity.role !== "learner" || identity.subject !== detail.learnerId) throw new ApiError("UNAUTHORIZED", "Learners can modify only their own attempts");
-    return createResponse(200, await db.startOrResumeAttempt(detail.id, identity.subject));
+    const attempt = await db.startOrResumeAttempt(detail.id, identity.subject);
+    if (!attempt) throw new ApiError("CONFLICT", "Completed missions require the explicit Retry action");
+    return createResponse(200, attempt);
   }
 
   const latestMatch = url.pathname.match(/^\/missions\/([^/]+)\/attempts\/latest$/);
@@ -133,11 +135,38 @@ export async function routeRequest(req, url, dependencies = {}) {
     if (detail.id.includes("detective") && responses.answer !== undefined && (!Number.isInteger(responses.answer) || responses.answer < 0 || responses.answer > 100)) throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "body", field: "responses.answer", message: "Siyana's answer must be a number from 0 to 100" }] });
     if (attemptMatch[2]) {
       const completion = requireStrings(body, ["explanation", "reflection"]);
-      const completed = await db.completeAttempt(attempt.id, { currentStep, completedSteps, responses, ...completion });
+      const completed = await db.completeAttempt(attempt.id, identity.subject, { currentStep, completedSteps, responses, ...completion });
       if (!completed) throw new ApiError("CONFLICT", "Attempt can no longer be completed");
       return createResponse(200, completed);
     }
     return createResponse(200, await db.saveAttempt(attempt.id, { currentStep, completedSteps: [...new Set(completedSteps)], responses }));
+  }
+
+  const lifecycleMatch = url.pathname.match(/^\/attempts\/(\d+)\/(abandon|retry|redact)$/);
+  if (req.method === "POST" && lifecycleMatch) {
+    requireIdentity(identity);
+    if (identity.role !== "learner") throw new ApiError("UNAUTHORIZED", "Learners alone can manage attempts");
+    const attempt = await db.getAttempt(Number(lifecycleMatch[1]));
+    if (!attempt) throw new ApiError("NOT_FOUND", "Attempt not found");
+    if (attempt.learnerId !== identity.subject) throw new ApiError("UNAUTHORIZED", "Attempt ownership required");
+    const action = lifecycleMatch[2];
+    if (action === "abandon") {
+      if (attempt.status !== "in_progress") throw new ApiError("CONFLICT", "Only an in-progress attempt can be abandoned");
+      const abandoned = await db.abandonAttempt(attempt.id);
+      if (!abandoned) throw new ApiError("CONFLICT", "Attempt can no longer be abandoned");
+      return createResponse(200, abandoned);
+    }
+    if (action === "retry") {
+      if (attempt.status !== "completed") throw new ApiError("CONFLICT", "Only a completed attempt can be retried");
+      const retry = await db.retryAttempt(attempt.id, identity.subject);
+      if (!retry) throw new ApiError("CONFLICT", "Attempt can no longer be retried");
+      return createResponse(201, retry);
+    }
+    if (!['completed', 'abandoned'].includes(attempt.status)) throw new ApiError("CONFLICT", "Only closed attempts can be redacted");
+    const body = requireStrings(await readJson(req), ["deletionReason"]);
+    const redacted = await db.redactAttemptResponses(attempt.id, body.deletionReason);
+    if (!redacted) throw new ApiError("CONFLICT", "Attempt responses are already redacted");
+    return createResponse(200, redacted);
   }
 
   if (req.method === "POST" && url.pathname === "/companion/message") {
