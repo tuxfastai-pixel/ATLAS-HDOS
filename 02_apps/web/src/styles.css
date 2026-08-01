@@ -270,3 +270,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 4px
 .choice input { width: 24px; height: 24px; }
 .parent-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 16px; width: min(1000px,calc(100% - 32px)); margin: 16px auto; }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.growth-dna { grid-column: 1 / -1; }
+.growth-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 10px; }
+.growth-signal { border-left: 4px solid var(--brand); border-radius: 6px; padding: 10px 12px; background: var(--surface-soft); }
+.growth-signal h3 { text-transform: capitalize; }
+.growth-signal p:last-child { margin-bottom: 0; }

@@ -38,7 +38,8 @@ export async function routeRequest(req, url, dependencies = {}) {
   const db = dependencies.repository || repository;
   const databaseCheck = dependencies.checkDatabase || checkDatabase;
   const identity = authenticationBoundary(req);
-  rejectQueryParameters(url);
+  const observationsPath = /^\/learners\/[^/]+\/observations$/.test(url.pathname);
+  if (!observationsPath) rejectQueryParameters(url);
 
   if (req.method === "OPTIONS") return createResponse(204, null);
   if (req.method === "GET" && url.pathname === "/health") return createResponse(200, { ok: true, service: "atlas-api" });
@@ -68,6 +69,27 @@ export async function routeRequest(req, url, dependencies = {}) {
     const home = await db.getLearnerHome(learnerId);
     if (!home) throw new ApiError("NOT_FOUND", "Learner not found");
     return createResponse(200, home);
+  }
+
+  const growthMatch = url.pathname.match(/^\/learners\/([^/]+)\/growth-dna$/);
+  if (req.method === "GET" && growthMatch) {
+    const learnerId = validateIdentifier(growthMatch[1], "path", "learnerId");
+    await authorizeLearner(identity, learnerId, db);
+    const profile = await db.getGrowthDna(learnerId);
+    if (!profile) throw new ApiError("NOT_FOUND", "Learner not found");
+    return createResponse(200, profile);
+  }
+
+  const observationsMatch = url.pathname.match(/^\/learners\/([^/]+)\/observations$/);
+  if (req.method === "GET" && observationsMatch) {
+    const learnerId = validateIdentifier(observationsMatch[1], "path", "learnerId");
+    await authorizeLearner(identity, learnerId, db);
+    const allowed = new Set(["limit", "offset"]);
+    if ([...url.searchParams.keys()].some((key) => !allowed.has(key))) throw new ApiError("VALIDATION_ERROR", "Request validation failed");
+    const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 20;
+    const offset = url.searchParams.has("offset") ? Number(url.searchParams.get("offset")) : 0;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !Number.isInteger(offset) || offset < 0) throw new ApiError("VALIDATION_ERROR", "Request validation failed");
+    return createResponse(200, { learnerId, observations: await db.getLearnerObservations(learnerId, limit, offset), pagination: { limit, offset } });
   }
 
   const missionMatch = url.pathname.match(/^\/missions\/([^/]+)$/);

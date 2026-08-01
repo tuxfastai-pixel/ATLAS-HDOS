@@ -47,6 +47,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     if (await response.isVisible()) await response.fill("A fossil is evidence of ancient life.");
     await page.getByRole("button", { name: "Complete mission" }).click();
     await expect(page.getByRole("heading", { name: "Mission complete!" })).toBeVisible();
+    await expect(page.locator("#growth-dna-list")).toContainText(/problem solving|persistence/i);
   });
 
   test("Siyana answers, chooses confidence, saves, resumes, and completes Junior Detective Maths", async ({ page }) => {
@@ -69,6 +70,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await advanceToEnd(page);
     await page.getByRole("button", { name: "Complete mission" }).click();
     await expect(page.getByRole("heading", { name: "Mission complete!" })).toBeVisible();
+    await expect(page.locator("#growth-dna-list")).toContainText(/numeracy|persistence/i);
   });
 
   test("parent sees children separately and learner cannot enter parent workspace", async ({ page, request }) => {
@@ -76,6 +78,8 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await expect(page.getByRole("heading", { name: "Leago" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Siyana" })).toBeVisible();
     await expect(page.getByText(/Most recently completed: The Lost Fossil/)).toBeVisible();
+    await expect(page.getByText("Why Atlas is showing this:").first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(/better than|worse than|sibling rank/i);
     const loginResponse = await request.post("http://127.0.0.1:3001/auth/login", { data: { username: "leago", password: "atlas123" } });
     const { token } = await loginResponse.json();
     const denied = await request.get("http://127.0.0.1:3001/parents/parent-siyana/summary", { headers: { authorization: `Bearer ${token}` } });
