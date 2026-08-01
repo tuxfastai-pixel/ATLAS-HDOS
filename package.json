@@ -12,10 +12,13 @@
     "db:seed": "node 03_services/api/src/db/seed.mjs",
     "test": "node --test 03_services/api/test/*.test.mjs",
     "smoke": "node Testing/smoke/smoke-check.mjs",
-    "test:browser": "node --test Testing/browser/*.test.mjs"
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.1"
   },
   "workspaces": [
     "02_apps/*",

@@ -127,3 +127,13 @@ ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT
 ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS last_saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_attempts_resumable ON mission_attempts (learner_id, mission_id, last_saved_at DESC);
+
+-- Sprint 007 transaction-safe attempt lifecycle.
+ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS abandoned_at TIMESTAMPTZ;
+ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS retry_of_attempt_id BIGINT REFERENCES mission_attempts(id);
+ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS retention_status TEXT NOT NULL DEFAULT 'retained';
+ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS retained_until TIMESTAMPTZ;
+ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS deletion_reason TEXT;
+CREATE INDEX IF NOT EXISTS idx_attempts_retry_lineage ON mission_attempts(retry_of_attempt_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_retention ON mission_attempts(retention_status, retained_until);

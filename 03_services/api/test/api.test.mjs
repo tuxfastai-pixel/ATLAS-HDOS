@@ -21,7 +21,10 @@ function repository(overrides = {}) {
     getLatestAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 2, completedSteps: [0,1], responses: { answer: 7 } }),
     getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "in_progress" }),
     saveAttempt: async (id, data) => ({ id, ...data, status: "in_progress" }),
-    completeAttempt: async (id, data) => ({ id, ...data, status: "completed" }),
+    completeAttempt: async (id, _learnerId, data) => ({ id, ...data, status: "completed" }),
+    abandonAttempt: async (id) => ({ id, status: "abandoned" }),
+    retryAttempt: async (id, learnerId) => ({ id: 42, retryOfAttemptId: id, learnerId, status: "in_progress" }),
+    redactAttemptResponses: async (id) => ({ id, status: "completed", responses: {}, retentionStatus: "redacted" }),
     parentOwnsLearner: async (parentId, learnerId) => parentId === "parent-siyana" && [leago.id, siyana.id].includes(learnerId),
     ...overrides
   };
@@ -139,4 +142,39 @@ test("Siyana response validation rejects invalid answers and confidence", async 
     assertError(await request(origin,"/attempts/41",{method:"PATCH",headers,body:JSON.stringify({currentStep:1,completedSteps:[0],responses:{answer:"seven"}})}),400,"VALIDATION_ERROR");
     assertError(await request(origin,"/attempts/41",{method:"PATCH",headers,body:JSON.stringify({currentStep:1,completedSteps:[0],responses:{confidence:"perfect"}})}),400,"VALIDATION_ERROR");
   });
+});
+test("owning learner can abandon but parent cannot", async () => {
+  await withApi(async (origin) => {
+    const abandoned = await request(origin, "/attempts/41/abandon", { method: "POST", headers: auth("atlas-dev-token-siyana"), body: "{}" });
+    assert.equal(abandoned.body.status, "abandoned");
+    assertError(await request(origin, "/attempts/41/abandon", { method: "POST", headers: auth("atlas-dev-token-parent"), body: "{}" }), 403, "UNAUTHORIZED");
+  });
+});
+test("abandoned and completed attempts are immutable", async () => {
+  for (const status of ["abandoned", "completed"]) {
+    await withApi(async (origin) => assertError(await request(origin, "/attempts/41", { method: "PATCH", headers: auth("atlas-dev-token-siyana"), body: JSON.stringify({ currentStep: 0, completedSteps: [], responses: {} }) }), 409, "CONFLICT"),
+      { repository: { getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status }) } });
+  }
+});
+test("completed attempt retry is explicit and preserves lineage", async () => {
+  await withApi(async (origin) => {
+    const result = await request(origin, "/attempts/41/retry", { method: "POST", headers: auth("atlas-dev-token-siyana"), body: "{}" });
+    assert.equal(result.response.status, 201);
+    assert.equal(result.body.retryOfAttemptId, 41);
+    assert.equal(result.body.status, "in_progress");
+  }, { repository: { getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "completed" }) } });
+});
+test("response redaction returns no learner content and keeps attempt metadata", async () => {
+  await withApi(async (origin) => {
+    const result = await request(origin, "/attempts/41/redact", { method: "POST", headers: auth("atlas-dev-token-siyana"), body: JSON.stringify({ deletionReason: "retention period ended" }) });
+    assert.equal(result.body.id, 41);
+    assert.equal(result.body.retentionStatus, "redacted");
+    assert.deepEqual(result.body.responses, {});
+    assert.doesNotMatch(JSON.stringify(result.body), /retention period ended|secret answer/);
+  }, { repository: { getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "completed" }) } });
+});
+test("retry and redaction enforce learner ownership", async () => {
+  await withApi(async (origin) => {
+    for (const action of ["retry", "redact"]) assertError(await request(origin, `/attempts/41/${action}`, { method: "POST", headers: auth("atlas-dev-token-leago"), body: JSON.stringify({ deletionReason: "requested" }) }), 403, "UNAUTHORIZED");
+  }, { repository: { getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "completed" }) } });
 });

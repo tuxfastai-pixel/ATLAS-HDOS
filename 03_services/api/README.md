@@ -45,4 +45,12 @@ Development login accepts `leago` / `atlas123`, `siyana` / `atlas123`, and the e
 
 Learners start or resume with `POST /missions/:missionId/attempts/start`, retrieve the latest resumable attempt with `GET /missions/:missionId/attempts/latest`, save with `PATCH /attempts/:attemptId`, and finish with `POST /attempts/:attemptId/complete`. Ownership and learner-role checks apply to every mutation, and completed attempts are immutable.
 
-`npm run migrate` uses the ordered `schema_migrations` ledger and safely skips applied SQL files. `npm run test:browser` performs lightweight browser-surface contract checks; it does not require a bundled browser runtime.
+`npm run migrate` uses the ordered `schema_migrations` ledger and safely skips applied SQL files. `npm run test:browser` runs the Playwright browser journeys described below.
+
+## Transaction-safe attempt lifecycle (Sprint 007)
+
+Completion locks and validates the learner-owned in-progress attempt, persists its final responses and timestamps, updates the mission, and writes the progress event in one PostgreSQL transaction. A failure at any point rolls the entire completion back. The `ATLAS_TEST_COMPLETION_FAILURE=after_attempt_update` seam is honored only when `NODE_ENV=test` and exists solely for rollback verification.
+
+Learners can explicitly `POST /attempts/:attemptId/abandon` for an in-progress attempt and `POST /attempts/:attemptId/retry` for a completed attempt. Retry creates a linked attempt and never resets the completed record. Closed-attempt response content can be removed with `POST /attempts/:attemptId/redact` and a `deletionReason`; identity, lifecycle timestamps, retry lineage, progress events, and deletion audit metadata remain intact, while response JSON, explanation, and reflection are erased.
+
+`npm run test:browser` now runs real Playwright journeys against the web and API servers. Install Chromium with `npx playwright install chromium` before running it locally.
