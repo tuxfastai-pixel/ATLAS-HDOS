@@ -183,7 +183,8 @@ try {
   const redacted = await verificationPool.query("SELECT response_data, explanation, reflection, retention_status, deleted_at, deletion_reason FROM mission_attempts WHERE id=$1", [completedLeago.id]);
   assert(redacted.rows[0].retention_status === "redacted" && Object.keys(redacted.rows[0].response_data).length === 0 && !redacted.rows[0].explanation && redacted.rows[0].deleted_at, "Response redaction did not survive restart");
   const finalSummary = await api(`/parents/${parentLogin.user.id}/summary`, { headers: parentHeaders });
-  assert(finalSummary.children.find((child) => child.name === "Leago")?.currentMission?.percentage > 0, "Parent summary omitted in-progress state");
+  const leagoFinalSummary = finalSummary.children.find((child) => child.name === "Leago");
+  assert(leagoFinalSummary?.currentMission?.title === "The Lost Fossil" && leagoFinalSummary.currentMission.percentage === 0, "Parent summary omitted in-progress retry state");
   assert(finalSummary.children.find((child) => child.name === "Siyana")?.mostRecentCompletedMission === "Junior Detective Maths", "Parent summary omitted completion");
 
   console.log("Smoke checks passed:");

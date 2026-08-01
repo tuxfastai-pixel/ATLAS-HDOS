@@ -7,9 +7,22 @@ async function login(page, username, password) {
   await page.getByRole("button", { name: "Log in" }).click();
 }
 
+async function goNext(page) {
+  await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().includes("/attempts/") &&
+      response.request().method() === "PATCH" &&
+      response.ok()
+    ),
+    page.getByRole("button", { name: "Next", exact: true }).click()
+  ]);
+}
+
 async function advanceToEnd(page) {
-  while (await page.getByRole("button", { name: "Next" }).isVisible()) {
-    await page.getByRole("button", { name: "Next" }).click();
+  const complete = page.getByRole("button", { name: "Complete mission", exact: true });
+
+  while (!(await complete.isVisible())) {
+    await goNext(page);
   }
 }
 
@@ -18,10 +31,17 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await login(page, "leago", "atlas123");
     await expect(page.getByRole("heading", { name: "Welcome, Leago" })).toBeVisible();
     await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button").click();
-    await page.getByRole("button", { name: "Next" }).click();
+    await goNext(page);
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button", { name: "Resume" }).click();
-    await expect(page.getByText(/Step 2 of/)).toBeVisible();
+    await page
+      .getByRole("article")
+      .filter({ hasText: "The Lost Fossil" })
+      .getByRole("button", { name: "Resume", exact: true })
+      .click();
+    await expect(page.locator("#progress-area")).toBeVisible();
+    await expect(page.locator("#step-indicator")).toContainText(
+      "Step 2 of"
+    );
     await advanceToEnd(page);
     const response = page.locator("textarea").first();
     if (await response.isVisible()) await response.fill("A fossil is evidence of ancient life.");
@@ -32,12 +52,19 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
   test("Siyana answers, chooses confidence, saves, resumes, and completes Junior Detective Maths", async ({ page }) => {
     await login(page, "siyana", "atlas123");
     await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button").click();
-    for (let step = 0; step < 3; step += 1) await page.getByRole("button", { name: "Next" }).click();
+    for (let step = 0; step < 3; step += 1) await goNext(page);
     await page.getByLabel("Your number").fill("7");
-    await page.getByRole("button", { name: "Next" }).click();
+    await goNext(page);
+    await page.locator("textarea").first().fill("Five plus two makes seven.");
+    await goNext(page);
     await page.getByLabel("I understand").check();
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Resume" }).click();
+    await page
+      .getByRole("article")
+      .filter({ hasText: "Junior Detective Maths" })
+      .getByRole("button", { name: "Resume", exact: true })
+      .click();
+    await expect(page.locator("#progress-area")).toBeVisible();
     await expect(page.getByLabel("I understand")).toBeChecked();
     await advanceToEnd(page);
     await page.getByRole("button", { name: "Complete mission" }).click();
