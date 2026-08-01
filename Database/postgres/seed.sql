@@ -49,6 +49,8 @@ ON CONFLICT (id) DO UPDATE SET learner_id=EXCLUDED.learner_id, title=EXCLUDED.ti
  summary=EXCLUDED.summary, duration_minutes=EXCLUDED.duration_minutes, domains=EXCLUDED.domains,
  status='not_started', completed_at=NULL;
 
+DELETE FROM learner_observations;
+DELETE FROM learner_growth_dimensions;
 DELETE FROM mission_attempts;
 DELETE FROM progress_events;
 DELETE FROM mission_objectives;

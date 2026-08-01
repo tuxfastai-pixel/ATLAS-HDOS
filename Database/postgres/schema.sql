@@ -137,3 +137,22 @@ ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE mission_attempts ADD COLUMN IF NOT EXISTS deletion_reason TEXT;
 CREATE INDEX IF NOT EXISTS idx_attempts_retry_lineage ON mission_attempts(retry_of_attempt_id);
 CREATE INDEX IF NOT EXISTS idx_attempts_retention ON mission_attempts(retention_status, retained_until);
+
+-- Sprint 008 Atlas Growth DNA foundation. See migration 008 for constraints and indexes.
+CREATE TABLE IF NOT EXISTS learner_growth_dimensions (
+  learner_id TEXT NOT NULL REFERENCES learners(id) ON DELETE CASCADE, dimension TEXT NOT NULL,
+  current_level INTEGER NOT NULL DEFAULT 50 CHECK (current_level BETWEEN 0 AND 100), evidence_count INTEGER NOT NULL DEFAULT 0,
+  last_observed_at TIMESTAMPTZ, trend TEXT NOT NULL DEFAULT 'insufficient_evidence', confidence_in_signal TEXT NOT NULL DEFAULT 'low',
+  explanation TEXT NOT NULL DEFAULT 'Atlas needs more mission evidence before describing this developmental signal.', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (learner_id, dimension)
+);
+CREATE TABLE IF NOT EXISTS learner_observations (
+  id BIGSERIAL PRIMARY KEY, learner_id TEXT NOT NULL REFERENCES learners(id) ON DELETE CASCADE,
+  mission_id TEXT NOT NULL REFERENCES missions(id), attempt_id BIGINT NOT NULL REFERENCES mission_attempts(id) ON DELETE CASCADE,
+  observation_type TEXT NOT NULL, dimension TEXT NOT NULL, direction TEXT NOT NULL, magnitude SMALLINT NOT NULL,
+  evidence_summary TEXT NOT NULL, source_event TEXT NOT NULL, observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  rule_version TEXT NOT NULL, metadata JSONB NOT NULL DEFAULT '{}'::JSONB, idempotency_key TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_growth_dimensions_learner ON learner_growth_dimensions(learner_id, dimension);
+CREATE INDEX IF NOT EXISTS idx_observations_learner_timeline ON learner_observations(learner_id, observed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_observations_learner_dimension ON learner_observations(learner_id, dimension, observed_at DESC);

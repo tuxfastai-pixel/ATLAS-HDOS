@@ -1,4 +1,5 @@
 import { query, withTransaction } from "./client.mjs";
+import { completionObservations, GROWTH_DIMENSIONS, GROWTH_DNA_MODEL_VERSION, lifecycleObservations, OBSERVATION_RULE_VERSION, storeObservations } from "../growth-dna.mjs";
 
 export async function findLearnerByCredentials(username, password) {
   const result = await query(
@@ -216,11 +217,47 @@ export async function getParentSummary(parentId) {
     (SELECT m.title FROM mission_attempts ma JOIN missions m ON m.id=ma.mission_id WHERE ma.learner_id=l.id AND ma.status='completed' ORDER BY ma.completed_at DESC LIMIT 1) recent_completed,
     (SELECT COALESCE(ma.response_data->>'confidence', ma.reflection) FROM mission_attempts ma WHERE ma.learner_id=l.id AND ma.status='completed' ORDER BY ma.completed_at DESC LIMIT 1) confidence
     FROM learners l WHERE l.parent_id=$1 ORDER BY l.display_name`, [parentId]);
+  const observationResult = await query(`SELECT o.learner_id,o.evidence_summary,o.dimension,o.observation_type,m.title
+    FROM learner_observations o JOIN missions m ON m.id=o.mission_id JOIN learners l ON l.id=o.learner_id
+    WHERE l.parent_id=$1 ORDER BY o.observed_at DESC,o.id DESC`, [parentId]);
   return { parent: { id: parent.id, name: parent.name }, children: children.rows.map((child) => ({
     id: child.id, name: child.display_name, currentMission: child.current_mission,
     mostRecentCompletedMission: child.recent_completed, confidenceReflection: child.confidence,
-    nextFocus: child.next_focus, familyMission: child.family_mission
+    nextFocus: child.next_focus, familyMission: child.family_mission,
+    growthInsights: observationResult.rows.filter((item) => item.learner_id === child.id).slice(0, 3).map((item) => ({
+      insight: item.evidence_summary, dimension: item.dimension,
+      whyAtlasIsShowingThis: `Atlas recorded minimized ${item.observation_type.replaceAll('_', ' ')} evidence from ${item.title}.`
+    }))
   })) };
+}
+
+export async function getGrowthDna(learnerId) {
+  const learner = await getLearnerById(learnerId);
+  if (!learner) return null;
+  const [dimensions, recent] = await Promise.all([
+    query("SELECT * FROM learner_growth_dimensions WHERE learner_id=$1", [learnerId]),
+    query(`SELECT o.observation_type,o.dimension,o.direction,o.magnitude,o.evidence_summary,o.observed_at,m.title
+      FROM learner_observations o JOIN missions m ON m.id=o.mission_id WHERE o.learner_id=$1 ORDER BY o.observed_at DESC,o.id DESC LIMIT 5`, [learnerId])
+  ]);
+  const byDimension = new Map(dimensions.rows.map((row) => [row.dimension, row]));
+  return { learnerId, dimensions: GROWTH_DIMENSIONS.map((dimension) => {
+    const row = byDimension.get(dimension);
+    return row ? { dimension, currentLevel: row.current_level, evidenceCount: row.evidence_count, lastObservedAt: row.last_observed_at,
+      trend: row.trend, confidenceInSignal: row.confidence_in_signal, explanation: row.explanation, updatedAt: row.updated_at } :
+      { dimension, currentLevel: 50, evidenceCount: 0, lastObservedAt: null, trend: "insufficient_evidence", confidenceInSignal: "low", explanation: "Atlas needs more mission evidence before describing this developmental signal.", updatedAt: null };
+  }), recentChanges: recent.rows.map(publicObservation), generatedAt: new Date().toISOString(), modelVersion: GROWTH_DNA_MODEL_VERSION, ruleVersion: OBSERVATION_RULE_VERSION };
+}
+
+function publicObservation(row) {
+  return { observationType: row.observation_type, dimension: row.dimension, direction: row.direction, magnitude: row.magnitude,
+    evidenceSummary: row.evidence_summary, sourceMission: row.title, observedAt: row.observed_at };
+}
+
+export async function getLearnerObservations(learnerId, limit = 20, offset = 0) {
+  const result = await query(`SELECT o.observation_type,o.dimension,o.direction,o.magnitude,o.evidence_summary,o.observed_at,m.title
+    FROM learner_observations o JOIN missions m ON m.id=o.mission_id WHERE o.learner_id=$1
+    ORDER BY o.observed_at DESC,o.id DESC LIMIT $2 OFFSET $3`, [learnerId, limit, offset]);
+  return result.rows.map(publicObservation);
 }
 
 export async function getMissionAttempts(learnerId) {
@@ -274,10 +311,13 @@ export async function getAttempt(attemptId) {
 }
 
 export async function saveAttempt(attemptId, { currentStep, completedSteps, responses }) {
-  const result = await query(`UPDATE mission_attempts SET current_step=$2, completed_steps=$3,
-    response_data=$4::jsonb, last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
-    [attemptId, currentStep, completedSteps, JSON.stringify(responses)]);
-  return attemptView(result.rows[0]);
+  return withTransaction(async (client) => {
+    const result = await client.query(`UPDATE mission_attempts SET current_step=$2, completed_steps=$3,
+      response_data=$4::jsonb, last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
+      [attemptId, currentStep, completedSteps, JSON.stringify(responses)]);
+    if (result.rowCount) await storeObservations(client, { attemptId, learnerId: result.rows[0].learner_id, missionId: result.rows[0].mission_id }, lifecycleObservations("progress_saved", { completedStepRatio: completedSteps.length }));
+    return attemptView(result.rows[0]);
+  });
 }
 
 export async function completeAttempt(attemptId, learnerId, data) {
@@ -295,6 +335,12 @@ export async function completeAttempt(attemptId, learnerId, data) {
     }
     await client.query(`INSERT INTO progress_events (learner_id, mission_id, event_type, summary)
       SELECT learner_id, id, 'mission_completed', 'Completed ' || title FROM missions WHERE id=$1`, [attempt.mission_id]);
+    const mission = await client.query("SELECT domains FROM missions WHERE id=$1", [attempt.mission_id]);
+    await storeObservations(client, { attemptId, learnerId, missionId: attempt.mission_id }, completionObservations({
+      retryOfAttemptId: attempt.retry_of_attempt_id, confidence: data.responses.confidence,
+      hasExplanation: Boolean(data.explanation?.trim()), completedStepRatio: data.completedSteps.length, domains: mission.rows[0].domains
+    }));
+    if (process.env.NODE_ENV === "test" && process.env.ATLAS_TEST_GROWTH_DNA_FAILURE === "after_profile_update") throw new Error("Injected Growth DNA failure");
     return attemptView(attempt);
   });
 }
@@ -307,6 +353,7 @@ export async function abandonAttempt(attemptId) {
     const attempt = result.rows[0];
     const completed = await client.query("SELECT 1 FROM mission_attempts WHERE mission_id=$1 AND status='completed' LIMIT 1", [attempt.mission_id]);
     if (!completed.rowCount) await client.query("UPDATE missions SET status='not_started', completed_at=NULL WHERE id=$1", [attempt.mission_id]);
+    await storeObservations(client, { attemptId, learnerId: attempt.learner_id, missionId: attempt.mission_id }, lifecycleObservations("mission_abandoned", { completedStepRatio: attempt.completed_steps.length }));
     return attemptView(attempt);
   });
 }
@@ -322,6 +369,7 @@ export async function retryAttempt(attemptId, learnerId) {
       VALUES ($1,$2,'in_progress',0,ARRAY[]::INTEGER[],'{}'::jsonb,$3) RETURNING *`,
       [original.rows[0].mission_id, learnerId, attemptId]);
     await client.query("UPDATE missions SET status='in_progress' WHERE id=$1", [original.rows[0].mission_id]);
+    await storeObservations(client, { attemptId: Number(result.rows[0].id), learnerId, missionId: original.rows[0].mission_id }, lifecycleObservations("mission_retried"));
     return attemptView(result.rows[0]);
   });
 }

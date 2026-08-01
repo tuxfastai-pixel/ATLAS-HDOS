@@ -54,3 +54,13 @@ Completion locks and validates the learner-owned in-progress attempt, persists i
 Learners can explicitly `POST /attempts/:attemptId/abandon` for an in-progress attempt and `POST /attempts/:attemptId/retry` for a completed attempt. Retry creates a linked attempt and never resets the completed record. Closed-attempt response content can be removed with `POST /attempts/:attemptId/redact` and a `deletionReason`; identity, lifecycle timestamps, retry lineage, progress events, and deletion audit metadata remain intact, while response JSON, explanation, and reflection are erased.
 
 `npm run test:browser` now runs real Playwright journeys against the web and API servers. Install Chromium with `npx playwright install chromium` before running it locally.
+
+## Atlas Growth DNA foundation (Sprint 008)
+
+Atlas Growth DNA converts minimized mission lifecycle evidence into deterministic, versioned developmental signals. Its 0–100 internal levels are bounded indicators used to evolve a profile; they are not grades, percentages of ability, diagnoses, personality labels, or sibling rankings. Every change originates in a stored observation produced by the centralized `growth-dna-rules-v1` rules.
+
+`GET /learners/:learnerId/growth-dna` returns all dimensions, their evidence confidence, and recent explainable changes. `GET /learners/:learnerId/observations` returns a safe, paginated timeline (default 20, maximum 50). Learners can read only themselves and parents can read only children linked through persisted relationships. Parent summaries keep each child's evidence separate and explain why each insight appears.
+
+Learner content (answers, explanations, and reflections) remains in the mission attempt until redaction. Observations retain only minimized facts such as a completed-step count category, mission domain category, or whether an explanation was provided; they never retain the content. Derived profile signals remain auditable after response redaction without making deleted content reconstructable. Sparse evidence is explicitly low-confidence.
+
+This foundation uses no generative model and is non-diagnostic. A future Atlas Brain may consume these explainable signals only through a separately approved, privacy-reviewed dependency; it must not replace the deterministic evidence ledger or invent learner facts.
