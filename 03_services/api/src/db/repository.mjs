@@ -401,13 +401,13 @@ function recommendationView(row) {
 async function calculateRecommendation(client, learnerId) {
   const learner = await client.query("SELECT 1 FROM learners WHERE id=$1", [learnerId]);
   if (!learner.rowCount) return undefined;
-  const [missions, attempts, prerequisites, observations] = await Promise.all([
-    client.query("SELECT id,title,duration_minutes,domains FROM missions WHERE learner_id=$1 ORDER BY id", [learnerId]),
-    client.query("SELECT id,mission_id,status,retry_of_attempt_id,last_saved_at FROM mission_attempts WHERE learner_id=$1 ORDER BY id", [learnerId]),
-    client.query(`SELECT p.mission_id,p.prerequisite_mission_id FROM mission_prerequisites p
-      JOIN missions m ON m.id=p.mission_id WHERE m.learner_id=$1 ORDER BY p.mission_id,p.prerequisite_mission_id`, [learnerId]),
-    client.query("SELECT id,dimension FROM learner_observations WHERE learner_id=$1 ORDER BY id", [learnerId])
-  ]);
+  // A pg Client supports one query at a time. Keep reads ordered while this
+  // transaction owns the client rather than queueing concurrent work.
+  const missions = await client.query("SELECT id,title,duration_minutes,domains FROM missions WHERE learner_id=$1 ORDER BY id", [learnerId]);
+  const attempts = await client.query("SELECT id,mission_id,status,retry_of_attempt_id,last_saved_at FROM mission_attempts WHERE learner_id=$1 ORDER BY id", [learnerId]);
+  const prerequisites = await client.query(`SELECT p.mission_id,p.prerequisite_mission_id FROM mission_prerequisites p
+    JOIN missions m ON m.id=p.mission_id WHERE m.learner_id=$1 ORDER BY p.mission_id,p.prerequisite_mission_id`, [learnerId]);
+  const observations = await client.query("SELECT id,dimension FROM learner_observations WHERE learner_id=$1 ORDER BY id", [learnerId]);
   const evidence = { missions: missions.rows, attempts: attempts.rows, prerequisites: prerequisites.rows, observations: observations.rows };
   const selected = selectRecommendation(evidence);
   if (!selected) return null;

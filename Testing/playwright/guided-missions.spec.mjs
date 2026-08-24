@@ -79,8 +79,15 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await login(page, "parent", "atlas-parent-123");
     await expect(page.getByRole("heading", { name: "Leago" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Siyana" })).toBeVisible();
-    await expect(page.getByText("Recommended next mission")).toHaveCount(2);
-    await expect(page.getByText("Supported growth areas:")).toHaveCount(2);
+    for (const learnerId of ["learner-leago", "learner-siyana"]) {
+      const child = page.locator(`[data-learner-id="${learnerId}"]`);
+      await expect(child).toHaveCount(1);
+      await expect(child.getByRole("heading", { name: "Recommended next mission", exact: true })).toHaveCount(1);
+      await expect(child.locator(".recommendation-reason")).toHaveCount(1);
+      await expect(child.locator(".recommendation-reason")).not.toBeEmpty();
+      await expect(child.locator(".supported-growth-areas")).toHaveCount(1);
+      await expect(child.locator(".supported-growth-areas")).toContainText("Supported growth areas:");
+    }
     await expect(page.getByText(/Most recently completed: The Lost Fossil/)).toBeVisible();
     await expect(page.getByText("Why Atlas is showing this:").first()).toBeVisible();
     await expect(page.locator("body")).not.toContainText(/better than|worse than|sibling rank/i);
