@@ -30,6 +30,8 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
   test("Leago saves, resumes at the correct step, and completes The Lost Fossil", async ({ page }) => {
     await login(page, "leago", "atlas123");
     await expect(page.getByRole("heading", { name: "Welcome, Leago" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recommended Next Mission" })).toBeVisible();
+    await expect(page.getByText("Why this mission?")).toBeVisible();
     await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button").click();
     await goNext(page);
     await page.getByRole("button", { name: "Save and exit" }).click();
@@ -77,6 +79,8 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await login(page, "parent", "atlas-parent-123");
     await expect(page.getByRole("heading", { name: "Leago" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Siyana" })).toBeVisible();
+    await expect(page.getByText("Recommended next mission")).toHaveCount(2);
+    await expect(page.getByText("Supported growth areas:")).toHaveCount(2);
     await expect(page.getByText(/Most recently completed: The Lost Fossil/)).toBeVisible();
     await expect(page.getByText("Why Atlas is showing this:").first()).toBeVisible();
     await expect(page.locator("body")).not.toContainText(/better than|worse than|sibling rank/i);

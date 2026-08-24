@@ -64,3 +64,11 @@ Atlas Growth DNA converts minimized mission lifecycle evidence into deterministi
 Learner content (answers, explanations, and reflections) remains in the mission attempt until redaction. Observations retain only minimized facts such as a completed-step count category, mission domain category, or whether an explanation was provided; they never retain the content. Derived profile signals remain auditable after response redaction without making deleted content reconstructable. Sparse evidence is explicitly low-confidence.
 
 This foundation uses no generative model and is non-diagnostic. A future Atlas Brain may consume these explainable signals only through a separately approved, privacy-reviewed dependency; it must not replace the deterministic evidence ledger or invent learner facts.
+
+## Adaptive Learning V1 (Sprint 009)
+
+Adaptive Learning selects one explainable next mission with the versioned `adaptive-learning-v1` rules. It excludes completed missions unless an in-progress retry exists, requires every prerequisite to be completed, gives an existing active attempt first priority, and then uses recorded Growth DNA dimensions only as a secondary alignment signal. Duration and mission ID provide stable tie-breaking. It does not use an LLM, external AI, predictive or aptitude scores, or fixed learner labels.
+
+Authorized learners and linked parents can use `GET /learners/:learnerId/recommendation`, the list-shaped `GET /learners/:learnerId/recommendations`, and `GET /learners/:learnerId/recommendation-history`. `POST /learners/:learnerId/recommendations/recalculate` explicitly refreshes the current result. Each recommendation includes a factual `reason`, `rulesApplied`, `supportedGrowthAreas`, and `ruleVersion`.
+
+Attempt creation, saving, completion, abandonment, retry creation, and their Growth DNA observations invalidate the current recommendation in the same PostgreSQL transaction. History snapshots are never deleted during invalidation. A read lazily calculates a missing current recommendation; its evidence fingerprint prevents unchanged reads or explicit recalculations from adding duplicate history snapshots.
