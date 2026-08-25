@@ -16,3 +16,4 @@ test("learner Growth DNA and child-separated parent insights use cautious langua
   assert.match(app, /growthInsights/);
   assert.doesNotMatch(`${html}${app}`, /sibling rank|better than|worse than/i);
 });
+test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended Next Mission/);assert.match(app,/Why this mission\?/);assert.match(app,/Start Mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});

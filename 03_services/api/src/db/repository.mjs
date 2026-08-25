@@ -1,5 +1,10 @@
 import { query, withTransaction } from "./client.mjs";
 import { completionObservations, GROWTH_DIMENSIONS, GROWTH_DNA_MODEL_VERSION, lifecycleObservations, OBSERVATION_RULE_VERSION, storeObservations } from "../growth-dna.mjs";
+import { evidenceFingerprint, selectRecommendation } from "../recommendations.mjs";
+
+async function invalidateRecommendation(client, learnerId) {
+  await client.query("DELETE FROM mission_recommendations WHERE learner_id=$1", [learnerId]);
+}
 
 export async function findLearnerByCredentials(username, password) {
   const result = await query(
@@ -164,7 +169,8 @@ export async function getMissionDetail(missionId) {
 }
 
 export async function completeMission(missionId, { explanation = "Completed during the mission.", reflection = "Ready to keep learning." } = {}) {
-  const result = await query(
+  return withTransaction(async (client) => {
+  const result = await client.query(
     `
       WITH completed AS (
         UPDATE missions SET status = 'completed', completed_at = COALESCE(completed_at, NOW())
@@ -183,7 +189,9 @@ export async function completeMission(missionId, { explanation = "Completed duri
     [missionId, explanation, reflection]
   );
 
+  if (result.rowCount) await invalidateRecommendation(client, result.rows[0].learner_id);
   return result.rows[0] || null;
+  });
 }
 
 export async function saveCompanionMessage({ learnerId, missionId, message, reply }) {
@@ -220,10 +228,12 @@ export async function getParentSummary(parentId) {
   const observationResult = await query(`SELECT o.learner_id,o.evidence_summary,o.dimension,o.observation_type,m.title
     FROM learner_observations o JOIN missions m ON m.id=o.mission_id JOIN learners l ON l.id=o.learner_id
     WHERE l.parent_id=$1 ORDER BY o.observed_at DESC,o.id DESC`, [parentId]);
-  return { parent: { id: parent.id, name: parent.name }, children: children.rows.map((child) => ({
+  const recommendations = await Promise.all(children.rows.map((child) => getRecommendation(child.id)));
+  return { parent: { id: parent.id, name: parent.name }, children: children.rows.map((child, index) => ({
     id: child.id, name: child.display_name, currentMission: child.current_mission,
     mostRecentCompletedMission: child.recent_completed, confidenceReflection: child.confidence,
     nextFocus: child.next_focus, familyMission: child.family_mission,
+    recommendation: recommendations[index],
     growthInsights: observationResult.rows.filter((item) => item.learner_id === child.id).slice(0, 3).map((item) => ({
       insight: item.evidence_summary, dimension: item.dimension,
       whyAtlasIsShowingThis: `Atlas recorded minimized ${item.observation_type.replaceAll('_', ' ')} evidence from ${item.title}.`
@@ -286,17 +296,20 @@ function attemptView(row) {
 }
 
 export async function startOrResumeAttempt(missionId, learnerId) {
-  const existing = await query(`SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
+  return withTransaction(async (client) => {
+  const existing = await client.query(`SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
     AND status='in_progress' ORDER BY last_saved_at DESC LIMIT 1`, [missionId, learnerId]);
   if (existing.rowCount) return attemptView(existing.rows[0]);
-  const completed = await query(`SELECT 1 FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
+  const completed = await client.query(`SELECT 1 FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
     AND status='completed' LIMIT 1`, [missionId, learnerId]);
   if (completed.rowCount) return null;
-  const result = await query(`INSERT INTO mission_attempts
+  const result = await client.query(`INSERT INTO mission_attempts
     (mission_id, learner_id, status, current_step, completed_steps, response_data)
     VALUES ($1,$2,'in_progress',0,ARRAY[]::INTEGER[],'{}'::JSONB) RETURNING *`, [missionId, learnerId]);
-  await query("UPDATE missions SET status='in_progress' WHERE id=$1 AND status <> 'completed'", [missionId]);
+  await client.query("UPDATE missions SET status='in_progress' WHERE id=$1 AND status <> 'completed'", [missionId]);
+  await invalidateRecommendation(client, learnerId);
   return attemptView(result.rows[0]);
+  });
 }
 
 export async function getLatestAttempt(missionId, learnerId) {
@@ -316,6 +329,7 @@ export async function saveAttempt(attemptId, { currentStep, completedSteps, resp
       response_data=$4::jsonb, last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
       [attemptId, currentStep, completedSteps, JSON.stringify(responses)]);
     if (result.rowCount) await storeObservations(client, { attemptId, learnerId: result.rows[0].learner_id, missionId: result.rows[0].mission_id }, lifecycleObservations("progress_saved", { completedStepRatio: completedSteps.length }));
+    if (result.rowCount) await invalidateRecommendation(client, result.rows[0].learner_id);
     return attemptView(result.rows[0]);
   });
 }
@@ -340,6 +354,7 @@ export async function completeAttempt(attemptId, learnerId, data) {
       retryOfAttemptId: attempt.retry_of_attempt_id, confidence: data.responses.confidence,
       hasExplanation: Boolean(data.explanation?.trim()), completedStepRatio: data.completedSteps.length, domains: mission.rows[0].domains
     }));
+    await invalidateRecommendation(client, learnerId);
     if (process.env.NODE_ENV === "test" && process.env.ATLAS_TEST_GROWTH_DNA_FAILURE === "after_profile_update") throw new Error("Injected Growth DNA failure");
     return attemptView(attempt);
   });
@@ -354,6 +369,7 @@ export async function abandonAttempt(attemptId) {
     const completed = await client.query("SELECT 1 FROM mission_attempts WHERE mission_id=$1 AND status='completed' LIMIT 1", [attempt.mission_id]);
     if (!completed.rowCount) await client.query("UPDATE missions SET status='not_started', completed_at=NULL WHERE id=$1", [attempt.mission_id]);
     await storeObservations(client, { attemptId, learnerId: attempt.learner_id, missionId: attempt.mission_id }, lifecycleObservations("mission_abandoned", { completedStepRatio: attempt.completed_steps.length }));
+    await invalidateRecommendation(client, attempt.learner_id);
     return attemptView(attempt);
   });
 }
@@ -370,8 +386,67 @@ export async function retryAttempt(attemptId, learnerId) {
       [original.rows[0].mission_id, learnerId, attemptId]);
     await client.query("UPDATE missions SET status='in_progress' WHERE id=$1", [original.rows[0].mission_id]);
     await storeObservations(client, { attemptId: Number(result.rows[0].id), learnerId, missionId: original.rows[0].mission_id }, lifecycleObservations("mission_retried"));
+    await invalidateRecommendation(client, learnerId);
     return attemptView(result.rows[0]);
   });
+}
+
+function recommendationView(row) {
+  if (!row) return null;
+  return { learnerId: row.learner_id, missionId: row.mission_id, title: row.title, reason: row.reason,
+    rulesApplied: row.rules_applied, supportedGrowthAreas: row.supported_growth_areas,
+    ruleVersion: row.rule_version, generatedAt: row.generated_at };
+}
+
+async function calculateRecommendation(client, learnerId) {
+  const learner = await client.query("SELECT 1 FROM learners WHERE id=$1", [learnerId]);
+  if (!learner.rowCount) return undefined;
+  // A pg Client supports one query at a time. Keep reads ordered while this
+  // transaction owns the client rather than queueing concurrent work.
+  const missions = await client.query("SELECT id,title,duration_minutes,domains FROM missions WHERE learner_id=$1 ORDER BY id", [learnerId]);
+  const attempts = await client.query("SELECT id,mission_id,status,retry_of_attempt_id,last_saved_at FROM mission_attempts WHERE learner_id=$1 ORDER BY id", [learnerId]);
+  const prerequisites = await client.query(`SELECT p.mission_id,p.prerequisite_mission_id FROM mission_prerequisites p
+    JOIN missions m ON m.id=p.mission_id WHERE m.learner_id=$1 ORDER BY p.mission_id,p.prerequisite_mission_id`, [learnerId]);
+  const observations = await client.query("SELECT id,dimension FROM learner_observations WHERE learner_id=$1 ORDER BY id", [learnerId]);
+  const evidence = { missions: missions.rows, attempts: attempts.rows, prerequisites: prerequisites.rows, observations: observations.rows };
+  const selected = selectRecommendation(evidence);
+  if (!selected) return null;
+  const fingerprint = evidenceFingerprint(evidence);
+  const inserted = await client.query(`INSERT INTO mission_recommendations
+    (learner_id,mission_id,reason,rules_applied,supported_growth_areas,rule_version,evidence_fingerprint)
+    VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7) ON CONFLICT (learner_id) DO UPDATE SET
+    mission_id=EXCLUDED.mission_id,reason=EXCLUDED.reason,rules_applied=EXCLUDED.rules_applied,
+    supported_growth_areas=EXCLUDED.supported_growth_areas,rule_version=EXCLUDED.rule_version,
+    evidence_fingerprint=EXCLUDED.evidence_fingerprint,generated_at=NOW()
+    RETURNING *`, [learnerId, selected.missionId, selected.reason, JSON.stringify(selected.rulesApplied), selected.supportedGrowthAreas, selected.ruleVersion, fingerprint]);
+  await client.query(`INSERT INTO recommendation_history
+    (learner_id,mission_id,reason,rules_applied,supported_growth_areas,rule_version,evidence_fingerprint,generated_at)
+    SELECT learner_id,mission_id,reason,rules_applied,supported_growth_areas,rule_version,evidence_fingerprint,generated_at
+    FROM mission_recommendations WHERE learner_id=$1 ON CONFLICT (learner_id,evidence_fingerprint) DO NOTHING`, [learnerId]);
+  return { ...inserted.rows[0], title: selected.title };
+}
+
+export async function getRecommendation(learnerId) {
+  return withTransaction(async (client) => {
+    const current = await client.query(`SELECT r.*,m.title FROM mission_recommendations r JOIN missions m ON m.id=r.mission_id WHERE r.learner_id=$1`, [learnerId]);
+    if (current.rowCount) return recommendationView(current.rows[0]);
+    const calculated = await calculateRecommendation(client, learnerId);
+    return calculated === undefined ? undefined : recommendationView(calculated);
+  });
+}
+
+export async function recalculateRecommendation(learnerId) {
+  return withTransaction(async (client) => {
+    await invalidateRecommendation(client, learnerId);
+    const calculated = await calculateRecommendation(client, learnerId);
+    return calculated === undefined ? undefined : recommendationView(calculated);
+  });
+}
+
+export async function getRecommendationHistory(learnerId) {
+  const result = await query(`SELECT h.*,m.title FROM recommendation_history h JOIN missions m ON m.id=h.mission_id
+    WHERE h.learner_id=$1 ORDER BY h.recorded_at DESC,h.id DESC`, [learnerId]);
+  return result.rows.map(recommendationView);
 }
 
 export async function redactAttemptResponses(attemptId, deletionReason) {
