@@ -93,6 +93,17 @@ export async function routeRequest(req, url, dependencies = {}) {
   }
 
   const missionMatch = url.pathname.match(/^\/missions\/([^/]+)$/);
+  const recommendationMatch = url.pathname.match(/^\/learners\/([^/]+)\/(recommendation|recommendations|recommendations\/recalculate|recommendation-history)$/);
+  if (recommendationMatch && (req.method === "GET" || (req.method === "POST" && recommendationMatch[2] === "recommendations/recalculate"))) {
+    const learnerId = validateIdentifier(recommendationMatch[1], "path", "learnerId");
+    await authorizeLearner(identity, learnerId, db);
+    if (recommendationMatch[2] === "recommendation-history") return createResponse(200, { learnerId, history: await db.getRecommendationHistory(learnerId) });
+    const recommendation = recommendationMatch[2] === "recommendations/recalculate" ? await db.recalculateRecommendation(learnerId) : await db.getRecommendation(learnerId);
+    if (recommendation === undefined) throw new ApiError("NOT_FOUND", "Learner not found");
+    if (recommendationMatch[2] === "recommendations") return createResponse(200, { learnerId, recommendations: recommendation ? [recommendation] : [] });
+    return createResponse(200, { learnerId, recommendation: recommendation || null });
+  }
+
   if (req.method === "GET" && missionMatch) {
     const mission = await db.getMissionDetail(validateIdentifier(missionMatch[1], "path", "missionId"));
     if (!mission) throw new ApiError("NOT_FOUND", "Mission not found");

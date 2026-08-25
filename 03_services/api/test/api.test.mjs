@@ -19,6 +19,9 @@ function repository(overrides = {}) {
     getMissionAttempts: async () => [],
     getGrowthDna: async (id) => ({ learnerId: id, dimensions: [{ dimension: "numeracy", currentLevel: 52, evidenceCount: 1, confidenceInSignal: "low", explanation: "Completed a numeracy mission." }], recentChanges: [], modelVersion: "atlas-growth-dna-v1", ruleVersion: "growth-dna-rules-v1" }),
     getLearnerObservations: async () => [{ observationType: "mission_domain_numeracy", dimension: "numeracy", direction: "positive", magnitude: 2, evidenceSummary: "Completed a mission with numeracy practice.", sourceMission: "Junior Detective Maths", observedAt: new Date(0).toISOString() }],
+    getRecommendation: async (id) => ({ learnerId: id, missionId: "mission-junior-detective-maths", title: "Junior Detective Maths", reason: "Continue your active attempt in Junior Detective Maths.", rulesApplied: ["active-attempt-priority"], supportedGrowthAreas: ["numeracy"], ruleVersion: "adaptive-learning-v1" }),
+    recalculateRecommendation: async (id) => ({ learnerId: id, missionId: "mission-junior-detective-maths", title: "Junior Detective Maths", reason: "Available next.", rulesApplied: [], supportedGrowthAreas: [], ruleVersion: "adaptive-learning-v1" }),
+    getRecommendationHistory: async () => [],
     startOrResumeAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 0, completedSteps: [], responses: {} }),
     getLatestAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 2, completedSteps: [0,1], responses: { answer: 7 } }),
     getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "in_progress" }),
@@ -191,5 +194,17 @@ test("Growth DNA endpoints enforce ownership and expose minimized evidence only"
     assert.doesNotMatch(JSON.stringify(observations.body), /response_data|secret answer|metadata/);
     assertError(await request(origin, `/learners/${siyana.id}/growth-dna`, { headers: auth("atlas-dev-token-leago") }), 403, "UNAUTHORIZED");
     assertError(await request(origin, `/learners/${siyana.id}/observations`), 401, "UNAUTHENTICATED");
+  });
+});
+
+test("recommendation endpoints are explainable and preserve linked-parent boundaries", async () => {
+  await withApi(async (origin) => {
+    const own = await request(origin, `/learners/${siyana.id}/recommendation`, { headers: auth("atlas-dev-token-siyana") });
+    assert.equal(own.body.recommendation.missionId, "mission-junior-detective-maths");
+    assert.deepEqual(own.body.recommendation.supportedGrowthAreas, ["numeracy"]);
+    assert.equal((await request(origin, `/learners/${siyana.id}/recommendations`, { headers: auth("atlas-dev-token-parent") })).body.recommendations.length, 1);
+    assert.equal((await request(origin, `/learners/${siyana.id}/recommendations/recalculate`, { method: "POST", headers: auth("atlas-dev-token-siyana"), body: "{}" })).response.status, 200);
+    assert.deepEqual((await request(origin, `/learners/${siyana.id}/recommendation-history`, { headers: auth("atlas-dev-token-parent") })).body.history, []);
+    assertError(await request(origin, `/learners/${siyana.id}/recommendation`, { headers: auth("atlas-dev-token-leago") }), 403, "UNAUTHORIZED");
   });
 });
