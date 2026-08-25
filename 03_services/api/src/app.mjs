@@ -94,7 +94,10 @@ export async function routeRequest(req, url, dependencies = {}) {
 
   const missionMatch = url.pathname.match(/^\/missions\/([^/]+)$/);
   const recommendationMatch = url.pathname.match(/^\/learners\/([^/]+)\/(recommendation|recommendations|recommendations\/recalculate|recommendation-history)$/);
-  if (recommendationMatch && (req.method === "GET" || (req.method === "POST" && recommendationMatch[2] === "recommendations/recalculate"))) {
+  const recommendationMethodAllowed = recommendationMatch &&
+    ((req.method === "GET" && recommendationMatch[2] !== "recommendations/recalculate") ||
+      (req.method === "POST" && recommendationMatch[2] === "recommendations/recalculate"));
+  if (recommendationMethodAllowed) {
     const learnerId = validateIdentifier(recommendationMatch[1], "path", "learnerId");
     await authorizeLearner(identity, learnerId, db);
     if (recommendationMatch[2] === "recommendation-history") return createResponse(200, { learnerId, history: await db.getRecommendationHistory(learnerId) });

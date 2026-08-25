@@ -208,3 +208,21 @@ test("recommendation endpoints are explainable and preserve linked-parent bounda
     assertError(await request(origin, `/learners/${siyana.id}/recommendation`, { headers: auth("atlas-dev-token-leago") }), 403, "UNAUTHORIZED");
   });
 });
+
+test("recommendation recalculation is POST-only and retains authorization", async () => {
+  let recalculations = 0;
+  await withApi(async (origin) => {
+    const learnerPost = await request(origin, `/learners/${siyana.id}/recommendations/recalculate`, { method: "POST", headers: auth("atlas-dev-token-siyana"), body: "{}" });
+    assert.equal(learnerPost.response.status, 200);
+    const parentPost = await request(origin, `/learners/${siyana.id}/recommendations/recalculate`, { method: "POST", headers: auth("atlas-dev-token-parent"), body: "{}" });
+    assert.equal(parentPost.response.status, 200);
+    assert.equal(recalculations, 2);
+    assertError(await request(origin, `/learners/${siyana.id}/recommendations/recalculate`, { method: "GET", headers: auth("atlas-dev-token-siyana") }), 404, "NOT_FOUND");
+    assert.equal(recalculations, 2, "GET must not invoke recommendation recalculation");
+    assertError(await request(origin, `/learners/${siyana.id}/recommendations/recalculate`, { method: "POST", headers: auth("atlas-dev-token-leago"), body: "{}" }), 403, "UNAUTHORIZED");
+    assert.equal(recalculations, 2);
+  }, { repository: { recalculateRecommendation: async (id) => {
+    recalculations += 1;
+    return { learnerId: id, missionId: "mission-junior-detective-maths", ruleVersion: "adaptive-learning-v1" };
+  } } });
+});

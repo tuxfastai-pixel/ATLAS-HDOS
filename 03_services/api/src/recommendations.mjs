@@ -35,8 +35,12 @@ export function selectRecommendation({ missions, attempts, prerequisites, observ
 
 export function evidenceFingerprint({ missions, attempts, prerequisites, observations }) {
   const normalized = {
-    missions: missions.map((m) => [m.id, m.duration_minutes, m.domains]).sort(),
-    attempts: attempts.map((a) => [String(a.id), a.mission_id, a.status, a.retry_of_attempt_id || null, String(a.last_saved_at || "")]).sort(),
+    ruleVersion: RECOMMENDATION_RULE_VERSION,
+    missions: missions.map((m) => [m.id, m.title, m.duration_minutes, m.domains]).sort(),
+    attempts: attempts.map((a) => [
+      String(a.id), a.mission_id, a.status, a.retry_of_attempt_id || null,
+      a.current_step ?? null, a.completed_steps || [], String(a.last_saved_at || "")
+    ]).sort(),
     prerequisites: prerequisites.map((p) => [p.mission_id, p.prerequisite_mission_id]).sort(),
     observations: observations.map((o) => [String(o.id), o.dimension]).sort()
   };

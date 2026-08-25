@@ -27,3 +27,20 @@ test("ordering and evidence fingerprints are stable regardless of input order", 
   assert.equal(selectRecommendation(evidence).missionId, "a");
   assert.equal(evidenceFingerprint(evidence), evidenceFingerprint({ ...evidence, missions: [...evidence.missions].reverse() }));
 });
+
+test("fingerprints cover curriculum inputs, saved attempt state, and the active rule version", () => {
+  const evidence = {
+    missions: [mission("a")],
+    attempts: [{ id: 1, mission_id: "a", status: "in_progress", retry_of_attempt_id: null, current_step: 1, completed_steps: [0], last_saved_at: "2026-08-25T00:00:00Z" }],
+    prerequisites: [],
+    observations: []
+  };
+  const original = evidenceFingerprint(evidence);
+  assert.notEqual(original, evidenceFingerprint({ ...evidence, prerequisites: [{ mission_id: "a", prerequisite_mission_id: "first" }] }));
+  assert.notEqual(original, evidenceFingerprint({ ...evidence, missions: [{ ...evidence.missions[0], title: "Changed title" }] }));
+  assert.notEqual(original, evidenceFingerprint({ ...evidence, missions: [{ ...evidence.missions[0], duration_minutes: 99 }] }));
+  assert.notEqual(original, evidenceFingerprint({ ...evidence, missions: [{ ...evidence.missions[0], domains: ["numeracy"] }] }));
+  assert.notEqual(original, evidenceFingerprint({ ...evidence, attempts: [{ ...evidence.attempts[0], current_step: 2 }] }));
+  assert.notEqual(original, evidenceFingerprint({ ...evidence, attempts: [{ ...evidence.attempts[0], completed_steps: [0, 1] }] }));
+  assert.match(RECOMMENDATION_RULE_VERSION, /^adaptive-learning-v\d+$/);
+});

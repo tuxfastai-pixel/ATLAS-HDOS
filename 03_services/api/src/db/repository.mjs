@@ -1,9 +1,13 @@
 import { query, withTransaction } from "./client.mjs";
 import { completionObservations, GROWTH_DIMENSIONS, GROWTH_DNA_MODEL_VERSION, lifecycleObservations, OBSERVATION_RULE_VERSION, storeObservations } from "../growth-dna.mjs";
-import { evidenceFingerprint, selectRecommendation } from "../recommendations.mjs";
+import { evidenceFingerprint, RECOMMENDATION_RULE_VERSION, selectRecommendation } from "../recommendations.mjs";
 
 async function invalidateRecommendation(client, learnerId) {
   await client.query("DELETE FROM mission_recommendations WHERE learner_id=$1", [learnerId]);
+}
+
+async function lockLearnerRecommendationState(client, learnerId) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 9))", [learnerId]);
 }
 
 export async function findLearnerByCredentials(username, password) {
@@ -170,6 +174,9 @@ export async function getMissionDetail(missionId) {
 
 export async function completeMission(missionId, { explanation = "Completed during the mission.", reflection = "Ready to keep learning." } = {}) {
   return withTransaction(async (client) => {
+  const owner = await client.query("SELECT learner_id FROM missions WHERE id=$1", [missionId]);
+  if (!owner.rowCount) return null;
+  await lockLearnerRecommendationState(client, owner.rows[0].learner_id);
   const result = await client.query(
     `
       WITH completed AS (
@@ -297,6 +304,7 @@ function attemptView(row) {
 
 export async function startOrResumeAttempt(missionId, learnerId) {
   return withTransaction(async (client) => {
+  await lockLearnerRecommendationState(client, learnerId);
   const existing = await client.query(`SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2
     AND status='in_progress' ORDER BY last_saved_at DESC LIMIT 1`, [missionId, learnerId]);
   if (existing.rowCount) return attemptView(existing.rows[0]);
@@ -325,6 +333,9 @@ export async function getAttempt(attemptId) {
 
 export async function saveAttempt(attemptId, { currentStep, completedSteps, responses }) {
   return withTransaction(async (client) => {
+    const owner = await client.query("SELECT learner_id FROM mission_attempts WHERE id=$1", [attemptId]);
+    if (!owner.rowCount) return null;
+    await lockLearnerRecommendationState(client, owner.rows[0].learner_id);
     const result = await client.query(`UPDATE mission_attempts SET current_step=$2, completed_steps=$3,
       response_data=$4::jsonb, last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`,
       [attemptId, currentStep, completedSteps, JSON.stringify(responses)]);
@@ -336,6 +347,7 @@ export async function saveAttempt(attemptId, { currentStep, completedSteps, resp
 
 export async function completeAttempt(attemptId, learnerId, data) {
   return withTransaction(async (client) => {
+    await lockLearnerRecommendationState(client, learnerId);
     const owned = await client.query("SELECT * FROM mission_attempts WHERE id=$1 AND learner_id=$2 FOR UPDATE", [attemptId, learnerId]);
     if (!owned.rowCount || owned.rows[0].status !== "in_progress") return null;
     const result = await client.query(`UPDATE mission_attempts SET status='completed', current_step=$2,
@@ -362,6 +374,9 @@ export async function completeAttempt(attemptId, learnerId, data) {
 
 export async function abandonAttempt(attemptId) {
   return withTransaction(async (client) => {
+    const owner = await client.query("SELECT learner_id FROM mission_attempts WHERE id=$1", [attemptId]);
+    if (!owner.rowCount) return null;
+    await lockLearnerRecommendationState(client, owner.rows[0].learner_id);
     const result = await client.query(`UPDATE mission_attempts SET status='abandoned', abandoned_at=NOW(),
       last_saved_at=NOW() WHERE id=$1 AND status='in_progress' RETURNING *`, [attemptId]);
     if (!result.rowCount) return null;
@@ -376,6 +391,7 @@ export async function abandonAttempt(attemptId) {
 
 export async function retryAttempt(attemptId, learnerId) {
   return withTransaction(async (client) => {
+    await lockLearnerRecommendationState(client, learnerId);
     const original = await client.query("SELECT * FROM mission_attempts WHERE id=$1 AND learner_id=$2 AND status='completed' FOR SHARE", [attemptId, learnerId]);
     if (!original.rowCount) return null;
     const active = await client.query("SELECT * FROM mission_attempts WHERE mission_id=$1 AND learner_id=$2 AND status='in_progress' LIMIT 1", [original.rows[0].mission_id, learnerId]);
@@ -398,17 +414,20 @@ function recommendationView(row) {
     ruleVersion: row.rule_version, generatedAt: row.generated_at };
 }
 
-async function calculateRecommendation(client, learnerId) {
+async function loadRecommendationEvidence(client, learnerId) {
   const learner = await client.query("SELECT 1 FROM learners WHERE id=$1", [learnerId]);
   if (!learner.rowCount) return undefined;
   // A pg Client supports one query at a time. Keep reads ordered while this
   // transaction owns the client rather than queueing concurrent work.
   const missions = await client.query("SELECT id,title,duration_minutes,domains FROM missions WHERE learner_id=$1 ORDER BY id", [learnerId]);
-  const attempts = await client.query("SELECT id,mission_id,status,retry_of_attempt_id,last_saved_at FROM mission_attempts WHERE learner_id=$1 ORDER BY id", [learnerId]);
+  const attempts = await client.query("SELECT id,mission_id,status,retry_of_attempt_id,current_step,completed_steps,last_saved_at FROM mission_attempts WHERE learner_id=$1 ORDER BY id", [learnerId]);
   const prerequisites = await client.query(`SELECT p.mission_id,p.prerequisite_mission_id FROM mission_prerequisites p
     JOIN missions m ON m.id=p.mission_id WHERE m.learner_id=$1 ORDER BY p.mission_id,p.prerequisite_mission_id`, [learnerId]);
   const observations = await client.query("SELECT id,dimension FROM learner_observations WHERE learner_id=$1 ORDER BY id", [learnerId]);
-  const evidence = { missions: missions.rows, attempts: attempts.rows, prerequisites: prerequisites.rows, observations: observations.rows };
+  return { missions: missions.rows, attempts: attempts.rows, prerequisites: prerequisites.rows, observations: observations.rows };
+}
+
+async function calculateRecommendation(client, learnerId, evidence) {
   const selected = selectRecommendation(evidence);
   if (!selected) return null;
   const fingerprint = evidenceFingerprint(evidence);
@@ -428,18 +447,28 @@ async function calculateRecommendation(client, learnerId) {
 
 export async function getRecommendation(learnerId) {
   return withTransaction(async (client) => {
+    await lockLearnerRecommendationState(client, learnerId);
+    const evidence = await loadRecommendationEvidence(client, learnerId);
+    if (evidence === undefined) return undefined;
     const current = await client.query(`SELECT r.*,m.title FROM mission_recommendations r JOIN missions m ON m.id=r.mission_id WHERE r.learner_id=$1`, [learnerId]);
-    if (current.rowCount) return recommendationView(current.rows[0]);
-    const calculated = await calculateRecommendation(client, learnerId);
-    return calculated === undefined ? undefined : recommendationView(calculated);
+    const fingerprint = evidenceFingerprint(evidence);
+    if (current.rowCount &&
+        current.rows[0].evidence_fingerprint === fingerprint &&
+        current.rows[0].rule_version === RECOMMENDATION_RULE_VERSION) {
+      return recommendationView(current.rows[0]);
+    }
+    if (current.rowCount) await invalidateRecommendation(client, learnerId);
+    return recommendationView(await calculateRecommendation(client, learnerId, evidence));
   });
 }
 
 export async function recalculateRecommendation(learnerId) {
   return withTransaction(async (client) => {
+    await lockLearnerRecommendationState(client, learnerId);
+    const evidence = await loadRecommendationEvidence(client, learnerId);
+    if (evidence === undefined) return undefined;
     await invalidateRecommendation(client, learnerId);
-    const calculated = await calculateRecommendation(client, learnerId);
-    return calculated === undefined ? undefined : recommendationView(calculated);
+    return recommendationView(await calculateRecommendation(client, learnerId, evidence));
   });
 }
 
