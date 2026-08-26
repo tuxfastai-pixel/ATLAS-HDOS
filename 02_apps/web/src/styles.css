@@ -259,7 +259,6 @@ h2 {
   }
 }
 
-
 progress { width: 100%; height: 1.25rem; accent-color: var(--accent); }
 textarea, input { width: 100%; border: 2px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 4px solid #f2b84b; outline-offset: 3px; }
@@ -275,3 +274,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 4px
 .growth-signal { border-left: 4px solid var(--brand); border-radius: 6px; padding: 10px 12px; background: var(--surface-soft); }
 .growth-signal h3 { text-transform: capitalize; }
 .growth-signal p:last-child { margin-bottom: 0; }
+
+.paper-practice-panel,
+.support-panel {
+  margin-top: 16px;
+  border: 2px solid #b8cbd3;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f7fbfc;
+}
+.paper-practice-panel { border-left: 5px solid var(--accent); }
+.support-panel { border-left: 5px solid var(--brand); }
+.paper-practice-panel h4,
+.support-panel h4 { margin: 0 0 8px; }
+.paper-practice-panel button,
+.support-panel button { margin-top: 8px; }
+.support-content { margin: 10px 0; border-radius: 8px; padding: 10px; background: #eaf4f7; }
+.support-content strong { text-transform: capitalize; }
+.support-content p:last-child { margin-bottom: 0; }
+.adaptive-confirmed { color: var(--ok); font-weight: 700; }

@@ -51,6 +51,9 @@ ON CONFLICT (id) DO UPDATE SET learner_id=EXCLUDED.learner_id, title=EXCLUDED.ti
 
 DELETE FROM learner_observations;
 DELETE FROM learner_growth_dimensions;
+DELETE FROM learning_responses;
+DELETE FROM learning_interaction_events;
+DELETE FROM attempt_challenge_state;
 DELETE FROM mission_attempts;
 DELETE FROM progress_events;
 DELETE FROM mission_objectives;
@@ -89,6 +92,37 @@ INSERT INTO mission_steps (mission_id, step_order, step_type, title, instruction
  ('mission-mandarin-greetings',1,'greeting','Hello','Say “Nǐ hǎo”. It is a friendly hello.'),
  ('mission-mandarin-greetings',2,'name','My name','Say “Wǒ jiào Siyana” to share your name.'),
  ('mission-mandarin-greetings',3,'context','Kind connections','Practise “xièxie” for thank you.');
+
+INSERT INTO learning_concepts (id, domain, title, version, active) VALUES
+  ('foundation-addition-within-10','Foundation Mathematics','Addition within 10','curriculum-v1',TRUE)
+ON CONFLICT (id) DO UPDATE SET domain=EXCLUDED.domain,title=EXCLUDED.title,version=EXCLUDED.version,active=EXCLUDED.active;
+
+INSERT INTO challenge_variants (
+  id, challenge_family_id, concept_id, mission_id, step_order, prompt, response_type,
+  validation_kind, validation_config, active, content_version
+) VALUES (
+  'siyana-pawprints-addition','foundation-addition-pawprints','foundation-addition-within-10',
+  'mission-junior-detective-maths',3,'Write the paw-print challenge on paper and solve it one step at a time.',
+  'number','integer_equals','{"protectedAnswer":7}'::jsonb,TRUE,'challenge-v1'
+)
+ON CONFLICT (id) DO UPDATE SET challenge_family_id=EXCLUDED.challenge_family_id,concept_id=EXCLUDED.concept_id,
+ mission_id=EXCLUDED.mission_id,step_order=EXCLUDED.step_order,prompt=EXCLUDED.prompt,response_type=EXCLUDED.response_type,
+ validation_kind=EXCLUDED.validation_kind,validation_config=EXCLUDED.validation_config,active=EXCLUDED.active,content_version=EXCLUDED.content_version;
+
+INSERT INTO mission_step_learning_config (
+  mission_id, step_order, concept_id, challenge_variant_id, paper_practice_required, independent_attempt_required
+) VALUES (
+  'mission-junior-detective-maths',3,'foundation-addition-within-10','siyana-pawprints-addition',TRUE,TRUE
+)
+ON CONFLICT (mission_id,step_order) DO UPDATE SET concept_id=EXCLUDED.concept_id,challenge_variant_id=EXCLUDED.challenge_variant_id,
+ paper_practice_required=EXCLUDED.paper_practice_required,independent_attempt_required=EXCLUDED.independent_attempt_required;
+
+DELETE FROM support_ladder_items WHERE challenge_variant_id='siyana-pawprints-addition';
+INSERT INTO support_ladder_items (challenge_variant_id,support_position,support_kind,content,content_version) VALUES
+ ('siyana-pawprints-addition',1,'attention_prompt','Circle the two groups of paw prints in your drawing. What do you notice?','support-v1'),
+ ('siyana-pawprints-addition',2,'hint','Start with the group of five, then count on the two extra paw prints one at a time.','support-v1'),
+ ('siyana-pawprints-addition',3,'guided_breakdown','On paper, write the first group. Add one paw print, then one more, saying each new total quietly as you go.','support-v1'),
+ ('siyana-pawprints-addition',4,'worked_analogy','Try a different example first: 3 shells plus 1 shell makes 4 shells. Then return to the paw-print challenge.','support-v1');
 
 INSERT INTO parent_credentials (parent_id, username, password_dev_only)
 VALUES ('parent-siyana', 'parent', 'atlas-parent-123')

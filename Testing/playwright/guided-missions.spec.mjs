@@ -18,12 +18,20 @@ async function goNext(page) {
   ]);
 }
 
+async function adaptiveAction(page, name, endpointPart) {
+  await Promise.all([
+    page.waitForResponse((response) =>
+      response.url().includes(endpointPart) &&
+      response.request().method() === "POST" &&
+      response.ok()
+    ),
+    page.getByRole("button", { name, exact: true }).click()
+  ]);
+}
+
 async function advanceToEnd(page) {
   const complete = page.getByRole("button", { name: "Complete mission", exact: true });
-
-  while (!(await complete.isVisible())) {
-    await goNext(page);
-  }
+  while (!(await complete.isVisible())) await goNext(page);
 }
 
 test.describe.serial("Sprint 007 persisted browser journeys", () => {
@@ -35,15 +43,9 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button").click();
     await goNext(page);
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page
-      .getByRole("article")
-      .filter({ hasText: "The Lost Fossil" })
-      .getByRole("button", { name: "Resume", exact: true })
-      .click();
+    await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button", { name: "Resume", exact: true }).click();
     await expect(page.locator("#progress-area")).toBeVisible();
-    await expect(page.locator("#step-indicator")).toContainText(
-      "Step 2 of"
-    );
+    await expect(page.locator("#step-indicator")).toContainText("Step 2 of");
     await advanceToEnd(page);
     const response = page.locator("textarea").first();
     if (await response.isVisible()) await response.fill("A fossil is evidence of ancient life.");
@@ -52,21 +54,31 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await expect(page.locator("#growth-dna-list")).toContainText(/problem solving|persistence/i);
   });
 
-  test("Siyana answers, chooses confidence, saves, resumes, and completes Junior Detective Maths", async ({ page }) => {
+  test("Siyana uses paper-first support, resumes it, and completes Junior Detective Maths", async ({ page }) => {
     await login(page, "siyana", "atlas123");
     await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button").click();
-    for (let step = 0; step < 3; step += 1) await goNext(page);
+    await goNext(page);
+    await goNext(page);
+    await expect(page.getByRole("region", { name: "Paper practice" })).toBeVisible();
+    await expect(page.getByText("Write this challenge on paper.")).toBeVisible();
+    await page.getByLabel("Your number").fill("7");
+    await adaptiveAction(page, "I wrote it down", "/confirm-written");
+    await adaptiveAction(page, "Record my independent attempt", "/attempt");
+    await adaptiveAction(page, "Would you like a little help?", "/support");
+    await expect(page.getByText(/Circle the two groups of paw prints/i)).toBeVisible();
+    await adaptiveAction(page, "I finished this paper step", "/paper-complete");
+    await page.getByRole("button", { name: "Save and exit" }).click();
+    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Resume", exact: true }).click();
+    await expect(page.getByText(/Circle the two groups of paw prints/i)).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(/Level [0-9]|mastery score|difficulty level|weak learner|strong learner/i);
+    await goNext(page);
     await page.getByLabel("Your number").fill("7");
     await goNext(page);
     await page.locator("textarea").first().fill("Five plus two makes seven.");
     await goNext(page);
     await page.getByLabel("I understand").check();
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page
-      .getByRole("article")
-      .filter({ hasText: "Junior Detective Maths" })
-      .getByRole("button", { name: "Resume", exact: true })
-      .click();
+    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Resume", exact: true }).click();
     await expect(page.locator("#progress-area")).toBeVisible();
     await expect(page.getByLabel("I understand")).toBeChecked();
     await advanceToEnd(page);

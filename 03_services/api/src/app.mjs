@@ -8,7 +8,7 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
-  "access-control-allow-headers": "content-type,authorization,x-request-id"
+  "access-control-allow-headers": "content-type,authorization,x-request-id,idempotency-key"
 };
 
 export function createResponse(status, body, headers = {}) {
@@ -32,6 +32,23 @@ async function authorizeLearner(identity, learnerId, db) {
   if (identity.role === "learner" && identity.subject === learnerId) return;
   if (identity.role === "parent" && await db.parentOwnsLearner(identity.subject, learnerId)) return;
   throw new ApiError("UNAUTHORIZED", "You are not authorized to access this learner");
+}
+
+function requireLearnerAttemptOwner(identity, attempt) {
+  requireIdentity(identity);
+  if (identity.role !== "learner") throw new ApiError("UNAUTHORIZED", "Learners alone can modify adaptive learning state");
+  if (attempt.learnerId !== identity.subject) throw new ApiError("UNAUTHORIZED", "Attempt ownership required");
+}
+
+function adaptiveMutationInput(req, body) {
+  const idempotencyKey = req.headers?.["idempotency-key"];
+  if (typeof idempotencyKey !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)) {
+    throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "header", field: "Idempotency-Key", message: "Use a UUID v4 idempotency key" }] });
+  }
+  if (!Number.isInteger(body.stateVersion) || body.stateVersion < 1) {
+    throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "body", field: "stateVersion", message: "stateVersion must be a positive integer" }] });
+  }
+  return { idempotencyKey, stateVersion: body.stateVersion };
 }
 
 export async function routeRequest(req, url, dependencies = {}) {
@@ -121,6 +138,7 @@ export async function routeRequest(req, url, dependencies = {}) {
     if (!detail) throw new ApiError("NOT_FOUND", "Mission not found");
     await authorizeLearner(identity, detail.learnerId, db);
     if (identity.role !== "learner") throw new ApiError("UNAUTHORIZED", "Learners alone can modify attempts");
+    if (db.missionHasAdaptiveConfig && await db.missionHasAdaptiveConfig(missionId)) throw new ApiError("CONFLICT", "Adaptive missions must use the guided attempt completion flow");
     const completion = requireStrings(await readJson(req), ["explanation", "reflection"]);
     const mission = await db.completeMission(missionId, completion);
     if (!mission) throw new ApiError("NOT_FOUND", "Mission not found");
@@ -147,6 +165,37 @@ export async function routeRequest(req, url, dependencies = {}) {
     const attempt = await db.getLatestAttempt(detail.id, identity.subject);
     if (!attempt) throw new ApiError("NOT_FOUND", "No resumable attempt found");
     return createResponse(200, attempt);
+  }
+
+  const adaptivePlayerMatch = url.pathname.match(/^\/attempts\/(\d+)\/player$/);
+  if (req.method === "GET" && adaptivePlayerMatch) {
+    const attempt = await db.getAttempt(Number(adaptivePlayerMatch[1]));
+    if (!attempt) throw new ApiError("NOT_FOUND", "Attempt not found");
+    requireLearnerAttemptOwner(identity, attempt);
+    const player = await db.getAdaptivePlayer(attempt.id, identity.subject);
+    if (!player) throw new ApiError("NOT_FOUND", "Adaptive player state not found");
+    return createResponse(200, player);
+  }
+
+  const adaptiveActionMatch = url.pathname.match(/^\/attempts\/(\d+)\/challenges\/([^/]+)\/(attempt|support|confirm-written|paper-complete)$/);
+  if (req.method === "POST" && adaptiveActionMatch) {
+    const attempt = await db.getAttempt(Number(adaptiveActionMatch[1]));
+    if (!attempt) throw new ApiError("NOT_FOUND", "Attempt not found");
+    requireLearnerAttemptOwner(identity, attempt);
+    if (attempt.status !== "in_progress") throw new ApiError("CONFLICT", "Closed attempts cannot change adaptive support state");
+    const challengeVariantId = validateIdentifier(adaptiveActionMatch[2], "path", "challengeVariantId");
+    const body = await readJson(req);
+    const input = adaptiveMutationInput(req, body);
+    const action = adaptiveActionMatch[3];
+    if (action === "attempt") {
+      if (!body.response || Array.isArray(body.response) || typeof body.response !== "object" || Object.keys(body.response).length === 0) {
+        throw new ApiError("VALIDATION_ERROR", "Request validation failed", { details: [{ location: "body", field: "response", message: "Provide a non-empty response object" }] });
+      }
+      return createResponse(200, await db.recordAdaptiveAttempt(attempt.id, identity.subject, challengeVariantId, { ...input, response: body.response }));
+    }
+    if (action === "support") return createResponse(200, await db.requestAdaptiveSupport(attempt.id, identity.subject, challengeVariantId, input));
+    if (action === "confirm-written") return createResponse(200, await db.confirmPaperWritten(attempt.id, identity.subject, challengeVariantId, input));
+    return createResponse(200, await db.completePaperStep(attempt.id, identity.subject, challengeVariantId, input));
   }
 
   const attemptMatch = url.pathname.match(/^\/attempts\/(\d+)(\/complete)?$/);
@@ -198,7 +247,7 @@ export async function routeRequest(req, url, dependencies = {}) {
       if (!retry) throw new ApiError("CONFLICT", "Attempt can no longer be retried");
       return createResponse(201, retry);
     }
-    if (!['completed', 'abandoned'].includes(attempt.status)) throw new ApiError("CONFLICT", "Only closed attempts can be redacted");
+    if (!["completed", "abandoned"].includes(attempt.status)) throw new ApiError("CONFLICT", "Only closed attempts can be redacted");
     const body = requireStrings(await readJson(req), ["deletionReason"]);
     const redacted = await db.redactAttemptResponses(attempt.id, body.deletionReason);
     if (!redacted) throw new ApiError("CONFLICT", "Attempt responses are already redacted");
@@ -223,7 +272,6 @@ export async function routeRequest(req, url, dependencies = {}) {
     if (!summary) throw new ApiError("NOT_FOUND", "Parent not found");
     return createResponse(200, summary);
   }
-
 
   const historyMatch = url.pathname.match(/^\/learners\/([^/]+)\/mission-history$/);
   if (req.method === "GET" && historyMatch) {

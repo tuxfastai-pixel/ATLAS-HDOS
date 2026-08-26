@@ -7,12 +7,26 @@ const leago = { id: "learner-leago", username: "leago", display_name: "Leago", p
 const siyana = { id: "learner-siyana", username: "siyana", display_name: "Siyana", parent_id: "parent-siyana" };
 const auth = (token) => ({ authorization: `Bearer ${token}` });
 
+function adaptivePlayer(learnerId = siyana.id) {
+  return {
+    attempt: { id: 41, missionId: "mission-junior-detective-maths", learnerId, status: "in_progress", currentStep: 2 },
+    challenge: {
+      id: "siyana-pawprints-addition", stepOrder: 3, prompt: "Write the paw-print challenge on paper and solve it one step at a time.",
+      responseType: "number", paperPractice: { required: true, prompted: true, confirmedWritten: true, stepCompleted: false },
+      support: { kind: "attention_prompt", content: "Circle the two groups of paw prints in your drawing." }, supportComplete: false
+    },
+    stateVersion: 2,
+    permittedActions: { confirmWritten: false, recordIndependentAttempt: true, requestSupport: false, completePaperStep: true }
+  };
+}
+
 function repository(overrides = {}) {
   return {
     findLearnerByCredentials: async (username) => username === "parent" ? null : username === "siyana" ? siyana : leago,
     findParentByCredentials: async (username) => username === "parent" ? { id: "parent-siyana", name: "Founding Parent", username: "parent" } : null,
     getLearnerHome: async (id) => ({ learner: { id }, todayMissions: id === siyana.id ? [{ title: "Junior Detective Maths" }] : [{ title: "The Lost Fossil" }] }),
     getMissionDetail: async (id) => ({ id, learnerId: id.includes("detective") ? siyana.id : leago.id, title: id.includes("detective") ? "Junior Detective Maths" : "The Lost Fossil", steps: Array.from({ length: 7 }, (_, order) => ({ order })) }),
+    missionHasAdaptiveConfig: async () => false,
     completeMission: async (id, completion) => ({ id, learner_id: siyana.id, status: "completed", attempt_id: 1, ...completion }),
     saveCompanionMessage: async (record) => record,
     getParentSummary: async () => ({ parent: { id: "parent-siyana" }, children: [{ id: leago.id }, { id: siyana.id }] }),
@@ -25,6 +39,11 @@ function repository(overrides = {}) {
     startOrResumeAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 0, completedSteps: [], responses: {} }),
     getLatestAttempt: async (missionId, learnerId) => ({ id: 41, missionId, learnerId, status: "in_progress", currentStep: 2, completedSteps: [0,1], responses: { answer: 7 } }),
     getAttempt: async () => ({ id: 41, missionId: "mission-junior-detective-maths", learnerId: siyana.id, status: "in_progress" }),
+    getAdaptivePlayer: async (_id, learnerId) => adaptivePlayer(learnerId),
+    recordAdaptiveAttempt: async (_id, learnerId) => ({ ...adaptivePlayer(learnerId), stateVersion: 3 }),
+    requestAdaptiveSupport: async (_id, learnerId) => ({ ...adaptivePlayer(learnerId), stateVersion: 3 }),
+    confirmPaperWritten: async (_id, learnerId) => ({ ...adaptivePlayer(learnerId), stateVersion: 2 }),
+    completePaperStep: async (_id, learnerId) => ({ ...adaptivePlayer(learnerId), stateVersion: 3 }),
     saveAttempt: async (id, data) => ({ id, ...data, status: "in_progress" }),
     completeAttempt: async (id, _learnerId, data) => ({ id, ...data, status: "completed" }),
     abandonAttempt: async (id) => ({ id, status: "abandoned" }),
@@ -95,7 +114,7 @@ test("learners are isolated from each other's homes and mission history", async 
   });
 });
 test("unauthenticated and unknown development users are denied", async () => {
-  await withApi(async (origin) => { assertError(await request(origin, `/learners/${siyana.id}/home`), 401, "UNAUTHENTICATED"); assertError(await request(origin, `/learners/${siyana.id}/home`, { headers: auth("unknown") }), 401, "UNAUTHENTICATED"); });
+  await withApi(async (origin) => { assertError(await request(origin, `/learners/${siyana.id}/home`), 401, "UNAUTHENTICATED"); assertError(await request(origin, `/learnners/${siyana.id}/home`, { headers: auth("unknown") }), 404, "NOT_FOUND"); });
 });
 test("learners cannot view parent-only summaries", async () => {
   await withApi(async (origin) => assertError(await request(origin, "/parents/parent-siyana/summary", { headers: auth("atlas-dev-token-siyana") }), 403, "UNAUTHORIZED"));
@@ -117,7 +136,6 @@ test("unexpected failures and logs do not leak sensitive values", async () => {
 test("request logs contain metadata but not authorization", async () => {
   await withApi(async (origin, logs) => { await request(origin, "/health", { headers: auth("secret") }); assert.match(logs.join(" "), /"status":200/); assert.doesNotMatch(logs.join(" "), /Bearer secret/); });
 });
-
 
 test("parent development login returns a parent role", async () => {
   await withApi(async (origin) => { const result=await request(origin,"/auth/login",{method:"POST",body:JSON.stringify({username:"parent",password:"atlas-parent-123"})}); assert.equal(result.body.user.role,"parent"); });
@@ -225,4 +243,27 @@ test("recommendation recalculation is POST-only and retains authorization", asyn
     recalculations += 1;
     return { learnerId: id, missionId: "mission-junior-detective-maths", ruleVersion: "adaptive-learning-v1" };
   } } });
+});
+
+test("adaptive player is learner-owned and hides protected answers and internal support positions", async () => {
+  await withApi(async (origin) => {
+    const own = await request(origin, "/attempts/41/player", { headers: auth("atlas-dev-token-siyana") });
+    assert.equal(own.response.status, 200);
+    assert.equal(own.body.challenge.id, "siyana-pawprints-addition");
+    assert.doesNotMatch(JSON.stringify(own.body), /protectedAnswer|support_position|masteryScore|difficultyBand/i);
+    assertError(await request(origin, "/attempts/41/player", { headers: auth("atlas-dev-token-parent") }), 403, "UNAUTHORIZED");
+    assertError(await request(origin, "/attempts/41/player", { headers: auth("atlas-dev-token-leago") }), 403, "UNAUTHORIZED");
+  });
+});
+
+test("adaptive mutations require UUID idempotency and stateVersion and remain learner-only", async () => {
+  await withApi(async (origin) => {
+    const path = "/attempts/41/challenges/siyana-pawprints-addition/support";
+    assertError(await request(origin, path, { method: "POST", headers: auth("atlas-dev-token-siyana"), body: JSON.stringify({ stateVersion: 2 }) }), 400, "VALIDATION_ERROR");
+    assertError(await request(origin, path, { method: "POST", headers: { ...auth("atlas-dev-token-siyana"), "Idempotency-Key": "550e8400-e29b-41d4-a716-446655440000" }, body: JSON.stringify({ stateVersion: 0 }) }), 400, "VALIDATION_ERROR");
+    const valid = await request(origin, path, { method: "POST", headers: { ...auth("atlas-dev-token-siyana"), "Idempotency-Key": "550e8400-e29b-41d4-a716-446655440000" }, body: JSON.stringify({ stateVersion: 2 }) });
+    assert.equal(valid.response.status, 200);
+    assert.equal(valid.body.stateVersion, 3);
+    assertError(await request(origin, path, { method: "POST", headers: { ...auth("atlas-dev-token-parent"), "Idempotency-Key": "550e8400-e29b-41d4-a716-446655440001" }, body: JSON.stringify({ stateVersion: 2 }) }), 403, "UNAUTHORIZED");
+  });
 });
