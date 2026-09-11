@@ -8,14 +8,17 @@ async function login(page, username, password) {
 }
 
 async function goNext(page) {
-  await Promise.all([
-    page.waitForResponse((response) =>
-      response.url().includes("/attempts/") &&
-      response.request().method() === "PATCH" &&
-      response.ok()
-    ),
-    page.getByRole("button", { name: "Next", exact: true }).click()
-  ]);
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().includes("/attempts/") &&
+    response.request().method() === "PATCH"
+  );
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  const response = await responsePromise;
+  const body = await response.text();
+  expect(
+    response.status(),
+    `PATCH ${response.url()} failed with ${response.status()}: ${body}`
+  ).toBe(200);
 }
 
 async function adaptiveAction(page, name, endpointPart) {
