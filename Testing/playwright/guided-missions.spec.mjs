@@ -8,17 +8,22 @@ async function login(page, username, password) {
 }
 
 async function goNext(page) {
+  const next = page.getByRole("button", { name: "Next", exact: true });
+  await expect(next).toBeVisible();
+  await expect(next).toBeEnabled();
+  const stepBefore = await page.locator("#step-indicator").textContent();
   const responsePromise = page.waitForResponse((response) =>
     response.url().includes("/attempts/") &&
     response.request().method() === "PATCH"
   );
-  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await next.click();
   const response = await responsePromise;
   const body = await response.text();
   expect(
     response.status(),
     `PATCH ${response.url()} failed with ${response.status()}: ${body}`
   ).toBe(200);
+  await expect(page.locator("#step-indicator")).not.toHaveText(stepBefore || "");
 }
 
 async function adaptiveAction(page, name, endpointPart) {
@@ -34,7 +39,12 @@ async function adaptiveAction(page, name, endpointPart) {
 
 async function advanceToEnd(page) {
   const complete = page.getByRole("button", { name: "Complete mission", exact: true });
-  while (!(await complete.isVisible())) await goNext(page);
+  for (let guard = 0; guard < 12 && !(await complete.isVisible()); guard += 1) {
+    const next = page.getByRole("button", { name: "Next", exact: true });
+    await expect(next).toBeVisible();
+    await goNext(page);
+  }
+  await expect(complete).toBeVisible();
 }
 
 test.describe.serial("Sprint 007 persisted browser journeys", () => {
