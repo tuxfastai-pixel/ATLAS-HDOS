@@ -114,7 +114,10 @@ test("learners are isolated from each other's homes and mission history", async 
   });
 });
 test("unauthenticated and unknown development users are denied", async () => {
-  await withApi(async (origin) => { assertError(await request(origin, `/learners/${siyana.id}/home`), 401, "UNAUTHENTICATED"); assertError(await request(origin, `/learnners/${siyana.id}/home`, { headers: auth("unknown") }), 404, "NOT_FOUND"); });
+  await withApi(async (origin) => {
+    assertError(await request(origin, `/learners/${siyana.id}/home`), 401, "UNAUTHENTICATED");
+    assertError(await request(origin, `/learners/${siyana.id}/home`, { headers: auth("unknown") }), 401, "UNAUTHENTICATED");
+  });
 });
 test("learners cannot view parent-only summaries", async () => {
   await withApi(async (origin) => assertError(await request(origin, "/parents/parent-siyana/summary", { headers: auth("atlas-dev-token-siyana") }), 403, "UNAUTHORIZED"));
@@ -250,7 +253,7 @@ test("adaptive player is learner-owned and hides protected answers and internal 
     const own = await request(origin, "/attempts/41/player", { headers: auth("atlas-dev-token-siyana") });
     assert.equal(own.response.status, 200);
     assert.equal(own.body.challenge.id, "siyana-pawprints-addition");
-    assert.doesNotMatch(JSON.stringify(own.body), /protectedAnswer|support_position|masteryScore|difficultyBand/i);
+    assert.doesNotMatch(JSON.stringify(own.body), /protectedAnswer|support_position|masteryScore|difficultyBand|demandStage|demand_stage|progression|mastery_evidence|consolidation/i);
     assertError(await request(origin, "/attempts/41/player", { headers: auth("atlas-dev-token-parent") }), 403, "UNAUTHORIZED");
     assertError(await request(origin, "/attempts/41/player", { headers: auth("atlas-dev-token-leago") }), 403, "UNAUTHORIZED");
   });
