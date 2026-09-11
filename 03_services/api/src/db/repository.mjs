@@ -3,6 +3,7 @@ import { query, withTransaction } from "./client.mjs";
 import { completionObservations, GROWTH_DIMENSIONS, GROWTH_DNA_MODEL_VERSION, lifecycleObservations, OBSERVATION_RULE_VERSION, storeObservations } from "../growth-dna.mjs";
 import { evidenceFingerprint, RECOMMENDATION_RULE_VERSION, selectRecommendation } from "../recommendations.mjs";
 import { nextSupportDecision, publicSupportItem, SUPPORT_RULE_VERSION, supportContentLeaksAnswer } from "../adaptive-support.mjs";
+import { evaluateProgression, PROGRESSION_RULE_VERSION } from "../progression-rules.mjs";
 import { ApiError } from "../errors.mjs";
 
 async function invalidateRecommendation(client, learnerId) {
@@ -216,9 +217,20 @@ function attemptView(row) {
 async function initializeAdaptiveState(client, attempt) {
   await client.query(`INSERT INTO attempt_challenge_state
     (attempt_id,learner_id,mission_id,challenge_variant_id,step_order)
-    SELECT $1,$2,$3,cfg.challenge_variant_id,cfg.step_order
-    FROM mission_step_learning_config cfg WHERE cfg.mission_id=$3
-    ON CONFLICT (attempt_id,challenge_variant_id) DO NOTHING`, [attempt.id, attempt.learner_id, attempt.mission_id]);
+    SELECT $1,$2,$3,COALESCE(selected.id,cfg.challenge_variant_id),cfg.step_order
+    FROM mission_step_learning_config cfg
+    LEFT JOIN learner_concept_progression p
+      ON p.learner_id=$2 AND p.concept_id=cfg.concept_id AND p.rule_version=$4
+    LEFT JOIN LATERAL (
+      SELECT cv.id
+      FROM challenge_variants cv
+      WHERE cv.mission_id=cfg.mission_id AND cv.step_order=cfg.step_order
+        AND cv.concept_id=cfg.concept_id AND cv.active=TRUE
+      ORDER BY ABS(cv.demand_stage-COALESCE(p.current_stage,0)),cv.demand_stage,cv.id
+      LIMIT 1
+    ) selected ON TRUE
+    WHERE cfg.mission_id=$3
+    ON CONFLICT (attempt_id,step_order) DO NOTHING`, [attempt.id, attempt.learner_id, attempt.mission_id, PROGRESSION_RULE_VERSION]);
 }
 
 async function adaptiveChallengeView(client, attempt, challengeVariantId = null) {
@@ -226,18 +238,18 @@ async function adaptiveChallengeView(client, attempt, challengeVariantId = null)
   let challengeFilter = "cfg.step_order=$3";
   params.push(Number(attempt.current_step) + 1);
   if (challengeVariantId) {
-    challengeFilter = "cfg.challenge_variant_id=$3";
+    challengeFilter = "s.challenge_variant_id=$3";
     params[2] = challengeVariantId;
   }
   const result = await client.query(`SELECT
-      cfg.step_order,cfg.paper_practice_required,cfg.independent_attempt_required,cfg.concept_id,cfg.challenge_variant_id,
+      cfg.step_order,cfg.paper_practice_required,cfg.independent_attempt_required,cfg.concept_id,s.challenge_variant_id,
       cv.prompt,cv.response_type,cv.validation_kind,
       s.current_support_position,s.independent_attempt_recorded,s.paper_prompted,s.paper_confirmed,s.paper_step_completed,s.state_version,
       li.support_kind AS current_support_kind,li.content AS current_support_content
     FROM mission_step_learning_config cfg
-    JOIN challenge_variants cv ON cv.id=cfg.challenge_variant_id AND cv.active=TRUE
-    JOIN attempt_challenge_state s ON s.attempt_id=$1 AND s.challenge_variant_id=cfg.challenge_variant_id
-    LEFT JOIN support_ladder_items li ON li.challenge_variant_id=cfg.challenge_variant_id AND li.support_position=s.current_support_position
+    JOIN attempt_challenge_state s ON s.attempt_id=$1 AND s.step_order=cfg.step_order
+    JOIN challenge_variants cv ON cv.id=s.challenge_variant_id AND cv.active=TRUE
+    LEFT JOIN support_ladder_items li ON li.challenge_variant_id=s.challenge_variant_id AND li.support_position=s.current_support_position
     WHERE cfg.mission_id=$2 AND ${challengeFilter} LIMIT 1`, params);
   const row = result.rows[0];
   if (!row) return { attempt: attemptView(attempt), challenge: null, stateVersion: null, permittedActions: {} };
@@ -281,11 +293,12 @@ async function loadAdaptiveMutationContext(client, attemptId, learnerId, challen
   const attempt = await getOwnedAttemptForAdaptive(client, attemptId, learnerId);
   const duplicate = await client.query("SELECT 1 FROM learning_interaction_events WHERE idempotency_key=$1 LIMIT 1", [idempotencyKey]);
   if (duplicate.rowCount) return { attempt, duplicate: true };
-  const context = await client.query(`SELECT cfg.*,cv.validation_config,cv.validation_kind,cv.response_type,s.*
-    FROM mission_step_learning_config cfg
-    JOIN challenge_variants cv ON cv.id=cfg.challenge_variant_id
-    JOIN attempt_challenge_state s ON s.attempt_id=$1 AND s.challenge_variant_id=cfg.challenge_variant_id
-    WHERE cfg.mission_id=$2 AND cfg.challenge_variant_id=$3
+  const context = await client.query(`SELECT cfg.*,cv.validation_config,cv.validation_kind,cv.response_type,
+      cv.context_type,cv.scaffold_profile,cv.demand_stage,s.*
+    FROM attempt_challenge_state s
+    JOIN mission_step_learning_config cfg ON cfg.mission_id=s.mission_id AND cfg.step_order=s.step_order
+    JOIN challenge_variants cv ON cv.id=s.challenge_variant_id
+    WHERE s.attempt_id=$1 AND s.mission_id=$2 AND s.challenge_variant_id=$3
     FOR UPDATE OF s`, [attemptId, attempt.mission_id, challengeVariantId]);
   if (!context.rowCount) throw new ApiError("NOT_FOUND", "Adaptive challenge not found for this attempt");
   const row = context.rows[0];
@@ -314,6 +327,53 @@ async function updateChallengeState(client, attemptId, challengeVariantId, assig
     WHERE attempt_id=$1 AND challenge_variant_id=$2 RETURNING *`, [attemptId, challengeVariantId, ...values]);
   if (process.env.NODE_ENV === "test" && process.env.ATLAS_TEST_ADAPTIVE_FAILURE === "after_state_update") throw new Error("Injected adaptive state failure");
   return result.rows[0];
+}
+
+async function recordConceptProgressionEvidence(client, context, row) {
+  const raw = await client.query(`SELECT response_data FROM learning_responses
+    WHERE attempt_id=$1 AND challenge_variant_id=$2 AND retention_status='retained'
+    ORDER BY id DESC LIMIT 1`, [context.attempt.id, row.challenge_variant_id]);
+  const response = raw.rows[0]?.response_data || {};
+  const protectedAnswer = row.validation_config?.protectedAnswer;
+  const correct = protectedAnswer !== undefined && Number(response.answer) === Number(protectedAnswer);
+  const inserted = await client.query(`INSERT INTO concept_evidence_windows
+    (learner_id,concept_id,attempt_id,challenge_variant_id,correct,independent_attempt_recorded,paper_completed,
+     support_position,context_type,scaffold_profile,demand_stage,rule_version)
+    VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7,$8,$9,$10,$11)
+    ON CONFLICT (attempt_id,challenge_variant_id,rule_version) DO NOTHING RETURNING id,recorded_at`,
+    [context.attempt.learner_id,row.concept_id,context.attempt.id,row.challenge_variant_id,correct,row.independent_attempt_recorded,
+      row.current_support_position,row.context_type,row.scaffold_profile,row.demand_stage,PROGRESSION_RULE_VERSION]);
+  if (!inserted.rowCount) return;
+
+  await client.query(`INSERT INTO learner_concept_progression
+    (learner_id,concept_id,current_stage,evidence_count,rule_version,last_evidence_at)
+    VALUES ($1,$2,0,0,$3,$4) ON CONFLICT (learner_id,concept_id,rule_version) DO NOTHING`,
+    [context.attempt.learner_id,row.concept_id,PROGRESSION_RULE_VERSION,inserted.rows[0].recorded_at]);
+  const current = await client.query(`SELECT * FROM learner_concept_progression
+    WHERE learner_id=$1 AND concept_id=$2 AND rule_version=$3 FOR UPDATE`,
+    [context.attempt.learner_id,row.concept_id,PROGRESSION_RULE_VERSION]);
+  const evidenceRows = await client.query(`SELECT correct,independent_attempt_recorded,paper_completed,support_position,context_type,scaffold_profile
+    FROM concept_evidence_windows WHERE learner_id=$1 AND concept_id=$2 AND rule_version=$3
+    ORDER BY recorded_at DESC,id DESC LIMIT 5`, [context.attempt.learner_id,row.concept_id,PROGRESSION_RULE_VERSION]);
+  const evidence = evidenceRows.rows.reverse().map((item) => ({
+    correct: item.correct,
+    independentAttemptRecorded: item.independent_attempt_recorded,
+    paperCompleted: item.paper_completed,
+    supportPosition: item.support_position,
+    contextType: item.context_type,
+    scaffoldProfile: item.scaffold_profile
+  }));
+  const fromStage = Number(current.rows[0].current_stage);
+  const decision = evaluateProgression({ currentStage: fromStage, evidence });
+  await client.query(`UPDATE learner_concept_progression SET current_stage=$4,evidence_count=evidence_count+1,
+    last_evidence_at=$5,updated_at=NOW() WHERE learner_id=$1 AND concept_id=$2 AND rule_version=$3`,
+    [context.attempt.learner_id,row.concept_id,PROGRESSION_RULE_VERSION,decision.nextStage,inserted.rows[0].recorded_at]);
+  if (decision.movement !== "hold") {
+    await client.query(`INSERT INTO concept_progression_history
+      (learner_id,concept_id,from_stage,to_stage,movement,reason,trigger_evidence_id,rule_version)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [context.attempt.learner_id,row.concept_id,fromStage,decision.nextStage,decision.movement,decision.reason,inserted.rows[0].id,PROGRESSION_RULE_VERSION]);
+  }
 }
 
 export async function getAdaptivePlayer(attemptId, learnerId) {
@@ -421,6 +481,7 @@ export async function completePaperStep(attemptId, learnerId, challengeVariantId
       facts: { learnerMarkedComplete: true }
     });
     await updateChallengeState(client, attemptId, challengeVariantId, ["paper_step_completed"], [true]);
+    await recordConceptProgressionEvidence(client, context, row);
     return adaptiveChallengeView(client, context.attempt, challengeVariantId);
   });
 }
@@ -477,7 +538,7 @@ export async function completeAttempt(attemptId, learnerId, data) {
     await initializeAdaptiveState(client, owned.rows[0]);
     const required = await client.query(`SELECT cfg.paper_practice_required,s.independent_attempt_recorded,s.paper_confirmed,s.paper_step_completed
       FROM mission_step_learning_config cfg
-      JOIN attempt_challenge_state s ON s.attempt_id=$1 AND s.challenge_variant_id=cfg.challenge_variant_id
+      JOIN attempt_challenge_state s ON s.attempt_id=$1 AND s.step_order=cfg.step_order
       WHERE cfg.mission_id=$2`, [attemptId, owned.rows[0].mission_id]);
     if (required.rows.some((row) => !row.independent_attempt_recorded || (row.paper_practice_required && (!row.paper_confirmed || !row.paper_step_completed)))) return null;
     const result = await client.query(`UPDATE mission_attempts SET status='completed', current_step=$2,
