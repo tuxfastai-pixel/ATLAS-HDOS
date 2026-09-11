@@ -4,6 +4,7 @@ import test from "node:test";
 const html=await readFile(new URL("../../02_apps/web/src/index.html",import.meta.url),"utf8");
 const app=await readFile(new URL("../../02_apps/web/src/app.js",import.meta.url),"utf8");
 const seed=await readFile(new URL("../../Database/postgres/seed.sql",import.meta.url),"utf8");
+const progression=await readFile(new URL("../../03_services/api/src/progression-rules.mjs",import.meta.url),"utf8");
 test("login surface supports learner and explicit parent credentials",()=>{assert.match(html,/autocomplete="username"/);assert.match(html,/current-password/);assert.match(app,/user\.role==="parent"/);});
 test("shared player exposes save, resume, previous, next and completion controls",()=>{for(const id of ["previous-step","next-step","save-exit","complete-mission","mission-progress"])assert.match(html,new RegExp(`id="${id}"`));assert.match(app,/attempts\/start/);});
 test("Siyana and Leago response controls share accessible rendering",()=>{assert.match(app,/type="number"/);assert.match(app,/I need help/);assert.match(app,/research note/i);assert.match(app,/<fieldset>/);});
@@ -31,4 +32,12 @@ test("FP-010A presents paper-first support without exposing internal levels or t
   assert.match(seed,/foundation-addition-within-10/);
   assert.match(seed,/3 shells plus 1 shell makes 4 shells/);
   assert.doesNotMatch(app,/Level [0-9]|mastery score|difficulty level|weak learner|strong learner|promotion|demotion/i);
+});
+
+test("FP-010B authors discreet challenge variants while keeping progression language out of learner UI",()=>{
+  for (const variant of ["siyana-pawprints-addition","siyana-shells-addition","siyana-apples-addition","siyana-train-addition","siyana-birds-addition"]) assert.match(seed,new RegExp(variant));
+  assert.match(progression,/discreet-progression-v1/);
+  assert.match(progression,/three_recent_unsuccessful_attempts/);
+  assert.match(progression,/transferStrong/);
+  assert.doesNotMatch(`${html}${app}`,/understanding|consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
 });
