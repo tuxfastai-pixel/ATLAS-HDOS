@@ -69,6 +69,8 @@ try {
   assert(adaptiveLedger.rows[0].count === 1, "Migration 009 was not recorded exactly once after its first run");
   const supportLedger = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='010_adaptive_support'");
   assert(supportLedger.rows[0].count === 1, "Migration 010 was not recorded exactly once after its first run");
+  const progressionLedger = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='011_concept_progression'");
+  assert(progressionLedger.rows[0].count === 1, "Migration 011 was not recorded exactly once after its first run");
   const migrationCountBeforeRerun = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations");
   await run("node", ["03_services/api/src/db/migrate.mjs"], { DATABASE_URL: databaseUrl });
   const migrationCountAfterRerun = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations");
@@ -77,6 +79,8 @@ try {
   assert(adaptiveLedgerAfterRerun.rows[0].count === 1, "Second migration run duplicated migration 009");
   const supportLedgerAfterRerun = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='010_adaptive_support'");
   assert(supportLedgerAfterRerun.rows[0].count === 1, "Second migration run duplicated migration 010");
+  const progressionLedgerAfterRerun = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='011_concept_progression'");
+  assert(progressionLedgerAfterRerun.rows[0].count === 1, "Second migration run duplicated migration 011");
   await run("node", ["03_services/api/src/db/seed.mjs"], { DATABASE_URL: databaseUrl });
   const ledger = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='007_transaction_safety'");
   assert(ledger.rows[0].count === 1, "Migration 007 was not recorded exactly once");
@@ -86,6 +90,8 @@ try {
   assert(recommendationLedger.rows[0].count === 1, "Migration 009 was not recorded exactly once");
   const finalSupportLedger = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='010_adaptive_support'");
   assert(finalSupportLedger.rows[0].count === 1, "Migration 010 was not recorded exactly once");
+  const finalProgressionLedger = await verificationPool.query("SELECT count(*)::int AS count FROM schema_migrations WHERE migration_id='011_concept_progression'");
+  assert(finalProgressionLedger.rows[0].count === 1, "Migration 011 was not recorded exactly once");
 
   apiProcess = start("node", ["03_services/api/src/server.mjs"], { ATLAS_API_PORT: String(apiPort), DATABASE_URL: databaseUrl });
   webProcess = start("node", ["02_apps/web/server.mjs"], { ATLAS_WEB_PORT: String(webPort) });
@@ -118,7 +124,7 @@ try {
   let adaptivePlayer = await api(`/attempts/${siyanaAttempt.id}/player`, { headers: siyanaHeaders });
   assert(adaptivePlayer.challenge?.id === "siyana-pawprints-addition", "FP-010A challenge did not load at the configured step");
   assert(adaptivePlayer.challenge.paperPractice.required && adaptivePlayer.stateVersion === 1, "Paper-first adaptive state was not initialized safely");
-  assert(!JSON.stringify(adaptivePlayer).includes("protectedAnswer") && !JSON.stringify(adaptivePlayer).includes("currentSupportPosition"), "Adaptive player leaked protected/internal state");
+  assert(!/protectedAnswer|currentSupportPosition|demandStage|progression|mastery_evidence|consolidation/i.test(JSON.stringify(adaptivePlayer)), "Adaptive player leaked protected or progression-internal state");
 
   adaptivePlayer = await api(`/attempts/${siyanaAttempt.id}/challenges/siyana-pawprints-addition/confirm-written`, {
     method: "POST", headers: { ...siyanaHeaders, "Idempotency-Key": "11111111-1111-4111-8111-111111111111" },
@@ -150,6 +156,13 @@ try {
     body: JSON.stringify({ stateVersion: supportOne.stateVersion })
   });
   assert(adaptivePlayer.challenge.paperPractice.stepCompleted && adaptivePlayer.stateVersion === 5, "Paper step completion did not persist");
+  const progressionAfterFirst = await verificationPool.query(`SELECT current_stage,evidence_count FROM learner_concept_progression
+    WHERE learner_id=$1 AND concept_id='foundation-addition-within-10' AND rule_version='discreet-progression-v1'`, [siyanaLogin.user.id]);
+  assert(progressionAfterFirst.rowCount === 1 && progressionAfterFirst.rows[0].current_stage === 0 && progressionAfterFirst.rows[0].evidence_count === 1, "One correct challenge advanced progression instead of holding evidence");
+  const firstProgressionEvidence = await verificationPool.query(`SELECT correct,support_position,context_type,scaffold_profile FROM concept_evidence_windows
+    WHERE attempt_id=$1`, [siyanaAttempt.id]);
+  assert(firstProgressionEvidence.rowCount === 1 && firstProgressionEvidence.rows[0].correct && firstProgressionEvidence.rows[0].support_position === 1, "First progression evidence was not minimized and factual");
+  assert(!JSON.stringify(firstProgressionEvidence.rows).includes('"answer":7'), "Progression evidence retained the raw learner answer");
 
   await api(`/attempts/${siyanaAttempt.id}`, { method: "PATCH", headers: siyanaHeaders, body: JSON.stringify({ currentStep: 3, completedSteps: [0,1,2], responses: { answer: 7 } }) });
   const siyanaResume = await api("/missions/mission-junior-detective-maths/attempts/latest", { headers: siyanaHeaders });
@@ -318,8 +331,8 @@ try {
   assert(redactedLearningResponse.rowCount === 1 && redactedLearningResponse.rows[0].retention_status === "redacted" && Object.keys(redactedLearningResponse.rows[0].response_data).length === 0 && redactedLearningResponse.rows[0].deleted_at, "FP-010A raw response redaction failed");
 
   const growthFailureAttempt = await api(`/attempts/${resumedAfterRestart.id}/retry`, { method: "POST", headers: siyanaHeaders, body: "{}" });
-  const retryAdaptiveState = await verificationPool.query("SELECT current_support_position,independent_attempt_recorded,paper_confirmed,state_version FROM attempt_challenge_state WHERE attempt_id=$1", [growthFailureAttempt.id]);
-  assert(retryAdaptiveState.rowCount === 1 && retryAdaptiveState.rows[0].current_support_position === 0 && !retryAdaptiveState.rows[0].independent_attempt_recorded && !retryAdaptiveState.rows[0].paper_confirmed && retryAdaptiveState.rows[0].state_version === 1, "Retry inherited prior attempt support state");
+  const retryAdaptiveState = await verificationPool.query("SELECT current_support_position,independent_attempt_recorded,paper_confirmed,state_version,challenge_variant_id FROM attempt_challenge_state WHERE attempt_id=$1", [growthFailureAttempt.id]);
+  assert(retryAdaptiveState.rowCount === 1 && retryAdaptiveState.rows[0].challenge_variant_id === "siyana-pawprints-addition" && retryAdaptiveState.rows[0].current_support_position === 0 && !retryAdaptiveState.rows[0].independent_attempt_recorded && !retryAdaptiveState.rows[0].paper_confirmed && retryAdaptiveState.rows[0].state_version === 1, "Retry inherited prior support state or advanced after only one success");
   const historyBeforeRetryRead = await verificationPool.query("SELECT count(*)::int AS count FROM recommendation_history WHERE learner_id=$1", [siyanaLogin.user.id]);
   const currentAfterRetry = await verificationPool.query("SELECT count(*)::int AS count FROM mission_recommendations WHERE learner_id=$1", [siyanaLogin.user.id]);
   assert(currentAfterRetry.rows[0].count === 0, "Retry did not invalidate the current recommendation");
@@ -359,6 +372,12 @@ try {
     body: JSON.stringify({ stateVersion: retryPlayer.stateVersion })
   });
   assert(retryPlayer.challenge.paperPractice.stepCompleted, "Retry adaptive gates were not completed before completion testing");
+  const progressionAfterSecond = await verificationPool.query(`SELECT current_stage,evidence_count FROM learner_concept_progression
+    WHERE learner_id=$1 AND concept_id='foundation-addition-within-10' AND rule_version='discreet-progression-v1'`, [siyanaLogin.user.id]);
+  assert(progressionAfterSecond.rows[0].current_stage === 1 && progressionAfterSecond.rows[0].evidence_count === 2, "Two strong evidence points did not produce exactly one bounded progression step");
+  const progressionHistory = await verificationPool.query(`SELECT from_stage,to_stage,movement,reason FROM concept_progression_history
+    WHERE learner_id=$1 AND concept_id='foundation-addition-within-10' ORDER BY id`, [siyanaLogin.user.id]);
+  assert(progressionHistory.rowCount === 1 && progressionHistory.rows[0].from_stage === 0 && progressionHistory.rows[0].to_stage === 1 && progressionHistory.rows[0].movement === "up", "Progression history did not record exactly one bounded transition");
 
   const beforeGrowthFailure = await verificationPool.query(`SELECT
     ma.status,m.status AS mission_status,
@@ -408,6 +427,9 @@ try {
   const observationsAfterRestart = await api(`/learners/${siyanaLogin.user.id}/observations?limit=50`, { headers: siyanaHeaders });
   assert(growthAfterRestart.dimensions.some((dimension) => dimension.dimension === "numeracy" && dimension.evidenceCount === numeracyProfile.rows[0].evidence_count), "Growth DNA profile did not survive API restart");
   assert(observationsAfterRestart.observations.length === siyanaObservationCountBeforeRestart.rows[0].count, "Growth DNA observations did not survive restart");
+  const progressionAfterRestart = await verificationPool.query(`SELECT current_stage,evidence_count FROM learner_concept_progression
+    WHERE learner_id=$1 AND concept_id='foundation-addition-within-10' AND rule_version='discreet-progression-v1'`, [siyanaLogin.user.id]);
+  assert(progressionAfterRestart.rows[0].current_stage === 1 && progressionAfterRestart.rows[0].evidence_count === 2, "Concept progression did not survive restart");
   const abandonedHistory = await api(`/learners/${leagoLogin.user.id}/mission-history`, { headers: leagoHeaders });
   assert(abandonedHistory.attempts.some((attempt) => attempt.id === leagoAttempt.id && attempt.status === "abandoned"), "Abandonment did not survive restart");
   const replacement = await api("/missions/mission-lost-fossil/attempts/start", { method: "POST", headers: leagoHeaders, body: "{}" });
@@ -430,9 +452,16 @@ try {
   assert(leagoFinalSummary?.currentMission?.title === "The Lost Fossil" && leagoFinalSummary.currentMission.percentage === 0, "Parent summary omitted in-progress retry state");
   assert(finalSummary.children.find((child) => child.name === "Siyana")?.mostRecentCompletedMission === "Junior Detective Maths", "Parent summary omitted completion");
 
+  await api(`/attempts/${growthFailureAttempt.id}/abandon`, { method: "POST", headers: siyanaHeaders, body: "{}" });
+  const progressedRetry = await api(`/attempts/${resumedAfterRestart.id}/retry`, { method: "POST", headers: siyanaHeaders, body: "{}" });
+  await api(`/attempts/${progressedRetry.id}`, { method: "PATCH", headers: siyanaHeaders, body: JSON.stringify({ currentStep: 2, completedSteps: [0,1], responses: {} }) });
+  const progressedPlayer = await api(`/attempts/${progressedRetry.id}/player`, { headers: siyanaHeaders });
+  assert(progressedPlayer.challenge?.id === "siyana-shells-addition", "Next attempt did not select the discreet consolidation challenge after sufficient evidence");
+  assert(!/understanding|consolidation|mastery_evidence|demand_stage|progression/i.test(JSON.stringify(progressedPlayer)), "Learner player exposed internal progression language");
+
   console.log("Smoke checks passed:");
   console.log("- migration ledger rerun and PostgreSQL seed completed");
-  console.log("- migrations 007, 008, 009, and 010 are recorded once; second migration run applies nothing");
+  console.log("- migrations 007, 008, 009, 010, and 011 are recorded once; second migration run applies nothing");
   console.log("- completion creates minimized observations and bounded Growth DNA updates");
   console.log("- repeated reads and rule processing do not duplicate observations or profile evidence");
   console.log("- Sprint 007 and Growth DNA injected failures roll back every transaction component");
@@ -445,6 +474,7 @@ try {
   console.log("- abandonment, retry lineage, immutability, and redaction survive restart");
   console.log("- Sprint 009 recommendations are deterministic, isolated, serialized with lifecycle changes, cache-revalidated, historically immutable, and restart-persistent");
   console.log("- FP-010A paper-first support is idempotent, learner-owned, restart-persistent, rollback-safe, raw-response-minimized, redaction-safe, and fresh on retry");
+  console.log("- FP-010B discreet progression holds after one success, moves one bounded step after an evidence window, persists across restart, and selects the next challenge without exposing internal stages");
 } finally {
   await Promise.all([apiProcess && stop(apiProcess), webProcess && stop(webProcess)].filter(Boolean));
   await verificationPool.end();
