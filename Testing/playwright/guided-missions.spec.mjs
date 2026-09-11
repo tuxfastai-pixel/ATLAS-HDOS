@@ -61,6 +61,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await goNext(page);
     await expect(page.getByRole("region", { name: "Paper practice" })).toBeVisible();
     await expect(page.getByText("Write this challenge on paper.")).toBeVisible();
+    await expect(page.getByText(/Draw 5 paw prints, then 2 more/i)).toBeVisible();
     await page.getByLabel("Your number").fill("7");
     await adaptiveAction(page, "I wrote it down", "/confirm-written");
     await adaptiveAction(page, "Record my independent attempt", "/attempt");
@@ -85,6 +86,13 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await page.getByRole("button", { name: "Complete mission" }).click();
     await expect(page.getByRole("heading", { name: "Mission complete!" })).toBeVisible();
     await expect(page.locator("#growth-dna-list")).toContainText(/numeracy|persistence/i);
+
+    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Retry mission", exact: true }).click();
+    await goNext(page);
+    await goNext(page);
+    await expect(page.getByText(/Draw 5 paw prints, then 2 more/i)).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(/understanding|consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
+    await page.getByRole("button", { name: "Save and exit" }).click();
   });
 
   test("parent sees children separately and learner cannot enter parent workspace", async ({ page, request }) => {
