@@ -394,6 +394,7 @@ try {
   assert(recommendationAfterAbandonment.recommendation, "Abandonment did not produce a fresh recommendation on next read");
   const leagoHistoryAfterAbandonRead = await verificationPool.query("SELECT count(*)::int AS count FROM recommendation_history WHERE learner_id=$1", [leagoLogin.user.id]);
   assert(leagoHistoryAfterAbandonRead.rows[0].count > leagoHistoryBeforeAbandonRead.rows[0].count, "Abandonment recommendation was not appended to immutable history");
+  const siyanaObservationCountBeforeRestart = await verificationPool.query("SELECT count(*)::int AS count FROM learner_observations WHERE learner_id=$1", [siyanaLogin.user.id]);
 
   await stop(apiProcess);
   apiProcess = start("node", ["03_services/api/src/server.mjs"], { ATLAS_API_PORT: String(apiPort), DATABASE_URL: databaseUrl });
@@ -404,9 +405,9 @@ try {
   assert(siyanaHistoryAfterRestart.attempts.some((attempt) => attempt.id === resumedAfterRestart.id && attempt.status === "completed"), "Original completed attempt did not survive restart");
   assert(siyanaHistoryAfterRestart.attempts.some((attempt) => attempt.id === growthFailureAttempt.id && attempt.status === "in_progress"), "Rolled-back retry attempt did not survive restart");
   const growthAfterRestart = await api(`/learners/${siyanaLogin.user.id}/growth-dna`, { headers: siyanaHeaders });
-  const observationsAfterRestart = await api(`/learners/${siyanaLogin.user.id}/observations`, { headers: siyanaHeaders });
+  const observationsAfterRestart = await api(`/learners/${siyanaLogin.user.id}/observations?limit=50`, { headers: siyanaHeaders });
   assert(growthAfterRestart.dimensions.some((dimension) => dimension.dimension === "numeracy" && dimension.evidenceCount === numeracyProfile.rows[0].evidence_count), "Growth DNA profile did not survive API restart");
-  assert(observationsAfterRestart.observations.length === observationsBeforeReads.observations.length + 1, "Growth DNA observations did not survive restart");
+  assert(observationsAfterRestart.observations.length === siyanaObservationCountBeforeRestart.rows[0].count, "Growth DNA observations did not survive restart");
   const abandonedHistory = await api(`/learners/${leagoLogin.user.id}/mission-history`, { headers: leagoHeaders });
   assert(abandonedHistory.attempts.some((attempt) => attempt.id === leagoAttempt.id && attempt.status === "abandoned"), "Abandonment did not survive restart");
   const replacement = await api("/missions/mission-lost-fossil/attempts/start", { method: "POST", headers: leagoHeaders, body: "{}" });
