@@ -19,7 +19,7 @@ test("learner Growth DNA and child-separated parent insights use cautious langua
   assert.match(app, /growthInsights/);
   assert.doesNotMatch(`${html}${app}`, /sibling rank|better than|worse than/i);
 });
-test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended Next Mission/);assert.match(app,/Why Atlas picked this/);assert.match(app,/Open recommended mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});
+test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended next mission/);assert.match(app,/Why Atlas picked this/);assert.match(app,/Open recommended mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});
 
 test("FP-010A presents paper-first support without exposing internal levels or the protected answer",()=>{
   assert.match(app,/Paper practice/);
