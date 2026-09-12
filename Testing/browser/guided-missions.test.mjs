@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 const html=await readFile(new URL("../../02_apps/web/src/index.html",import.meta.url),"utf8");
 const app=await readFile(new URL("../../02_apps/web/src/app.js",import.meta.url),"utf8");
+const css=await readFile(new URL("../../02_apps/web/src/styles.css",import.meta.url),"utf8");
 const seed=await readFile(new URL("../../Database/postgres/seed.sql",import.meta.url),"utf8");
 const progression=await readFile(new URL("../../03_services/api/src/progression-rules.mjs",import.meta.url),"utf8");
 test("login surface supports learner and explicit parent credentials",()=>{assert.match(html,/autocomplete="username"/);assert.match(html,/current-password/);assert.match(app,/user\.role==="parent"/);});
 test("shared player exposes save, resume, previous, next and completion controls",()=>{for(const id of ["previous-step","next-step","save-exit","complete-mission","mission-progress"])assert.match(html,new RegExp(`id="${id}"`));assert.match(app,/attempts\/start/);});
 test("Siyana and Leago response controls share accessible rendering",()=>{assert.match(app,/type="number"/);assert.match(app,/I need help/);assert.match(app,/research note/i);assert.match(app,/<fieldset>/);});
 test("parent summaries keep child progress fields separate without direct learner confidence reflection",()=>{assert.match(app,/currentMission/);assert.match(app,/mostRecentCompletedMission/);assert.match(app,/growthInsights/);assert.match(app,/Learning process & growth insights/);assert.doesNotMatch(app,/confidenceReflection/);});
-test("retry and confirmed abandonment are accessible explicit actions",()=>{assert.match(html,/id="abandon-attempt"/);assert.match(html,/aria-live="polite"/);assert.match(app,/Retry mission/);assert.match(app,/window\.confirm/);assert.match(app,/\/retry/);assert.match(app,/\/abandon/);});
+test("retry and confirmed abandonment are accessible explicit actions",()=>{assert.match(html,/id="abandon-attempt"/);assert.match(html,/aria-live="polite"/);assert.match(app,/Try again/);assert.match(app,/window\.confirm/);assert.match(app,/\/retry/);assert.match(app,/\/abandon/);});
 
 test("learner Growth DNA and child-separated parent insights use cautious language", () => {
   assert.match(html, /Atlas Growth DNA/);
@@ -18,7 +19,7 @@ test("learner Growth DNA and child-separated parent insights use cautious langua
   assert.match(app, /growthInsights/);
   assert.doesNotMatch(`${html}${app}`, /sibling rank|better than|worse than/i);
 });
-test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended Next Mission/);assert.match(app,/Why this mission\?/);assert.match(app,/Start Mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});
+test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended next mission/);assert.match(app,/Why Atlas picked this/);assert.match(app,/Open recommended mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});
 
 test("FP-010A presents paper-first support without exposing internal levels or the protected answer",()=>{
   assert.match(app,/Paper practice/);
@@ -40,4 +41,27 @@ test("FP-010B authors discreet challenge variants while keeping progression lang
   assert.match(progression,/three_recent_unsuccessful_attempts/);
   assert.match(progression,/transferStrong/);
   assert.doesNotMatch(`${html}${app}`,/understanding|consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
+});
+
+test("FP-011 replaces development-facing copy with family pilot language",()=>{
+  assert.match(html,/Atlas Family Pilot/);
+  assert.match(html,/Welcome back/);
+  assert.match(html,/Your Atlas day/);
+  assert.match(html,/Family learning overview/);
+  assert.doesNotMatch(html,/Development authentication|development login/i);
+});
+
+test("FP-011 provides clear continue, support and return guidance",()=>{
+  assert.match(app,/Continue mission/);
+  assert.match(app,/Your place is saved/);
+  assert.match(app,/Welcome back\. Your saved place is ready/);
+  assert.match(app,/Ask Atlas for help|support your thinking/i);
+  assert.match(app,/factual learning evidence/i);
+});
+
+test("FP-011 keeps the family pilot usable on smaller screens",()=>{
+  assert.match(css,/@media \(max-width: 560px\)/);
+  assert.match(css,/\.player-actions \{ display: grid; grid-template-columns: 1fr 1fr; \}/);
+  assert.match(css,/#complete-mission,#save-exit \{ grid-column: 1 \/ -1; \}/);
+  assert.match(css,/min-height: 48px/);
 });
