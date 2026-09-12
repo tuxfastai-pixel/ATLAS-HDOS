@@ -39,6 +39,8 @@ function requireObservation(body) {
 
 export async function routePilotOperations(req, url, dependencies = {}) {
   if (!url.pathname.includes("/pilot-sessions")) return null;
+  if (req.method === "OPTIONS") return createResponse(204, null);
+
   const db = dependencies.pilotOperations || pilotRepository;
   const identity = authenticationBoundary(req);
 
