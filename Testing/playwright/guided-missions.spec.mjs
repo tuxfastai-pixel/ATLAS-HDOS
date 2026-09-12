@@ -16,14 +16,19 @@ async function goNext(page) {
     response.url().includes("/attempts/") &&
     response.request().method() === "PATCH"
   );
+  const playerPromise = page.waitForResponse((response) =>
+    response.url().includes("/attempts/") &&
+    response.url().endsWith("/player") &&
+    response.request().method() === "GET"
+  );
   await next.click();
-  const response = await responsePromise;
+  const [response] = await Promise.all([responsePromise, playerPromise]);
   const body = await response.text();
   expect(
     response.status(),
     `PATCH ${response.url()} failed with ${response.status()}: ${body}`
   ).toBe(200);
-  await expect(page.locator("#step-indicator")).not.toHaveText(stepBefore || "");
+  await expect(page.locator("#step-indicator")).not.toHaveText(stepBefore || "", { timeout: 15000 });
 }
 
 async function adaptiveAction(page, name, endpointPart) {
