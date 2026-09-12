@@ -24,8 +24,9 @@ test("pilot workspace keeps paper readiness and factual observation guidance vis
 
 test("pilot workspace uses parent-scoped lifecycle endpoints and recovery copy", () => {
   assert.match(source, /\/parents\/\$\{parentId\}\/pilot-sessions/);
-  assert.match(source, /\/start/);
-  assert.match(source, /\/complete/);
+  assert.match(source, /changeSessionState\(session\.id, "start"\)/);
+  assert.match(source, /changeSessionState\(session\.id, "complete"\)/);
+  assert.match(source, /\/pilot-sessions\/\$\{sessionId\}\/\$\{action\}/);
   assert.match(source, /\/observations/);
   assert.match(source, /Your family learning overview is still available/);
   assert.match(styles, /\.pilot-session-form/);
