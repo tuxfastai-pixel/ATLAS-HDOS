@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile("02_apps/web/src/app.js", "utf8");
+const html = await readFile("02_apps/web/src/index.html", "utf8");
 const feedbackRoute = await readFile("03_services/api/src/adaptive-feedback.mjs", "utf8");
 
 test("question-bearing learner steps require a digital response before advancing", () => {
   assert.match(source, /function inferredResponseType\(step\)/);
   assert.match(source, /instruction\.includes\("\?"\)/);
-  assert.match(source, /function canAdvance\(\)\{return hasCurrentResponse\(\)&&adaptiveStepReady\(\);\}/);
+  assert.match(source, /return hasCurrentResponse\(\)&&adaptiveStepReady\(\)/);
   assert.match(source, /Answer this step before moving on\./);
 });
 
@@ -44,4 +45,21 @@ test("adaptive answer checking returns only an evaluated outcome and child-facin
 test("correct answers do not present remediation as the primary next action", () => {
   assert.match(source, /requestSupport&&!player\.answerFeedback\?\.correct/);
   assert.match(source, /Finish your paper step, then continue when you are ready\./);
+});
+
+test("continuing a mission resumes at the first unfinished step", () => {
+  assert.match(source, /function resumeIndex\(attempt,total\)/);
+  assert.match(source, /state\.resumeStep=resumeIndex\(state\.attempt,state\.mission\.steps\.length\)/);
+  assert.match(source, /state\.step=state\.resumeStep/);
+  assert.match(source, /Atlas opened your next unfinished step/);
+});
+
+test("review navigation protects the learner saved place", () => {
+  assert.match(html, /id="review-from-start"/);
+  assert.match(html, /Review from beginning/);
+  assert.match(source, /state\.reviewMode=true;state\.step=0/);
+  assert.match(source, /Review mode:/);
+  assert.match(source, /Your saved place is protected/);
+  assert.match(source, /const currentStep=state\.reviewMode\?state\.resumeStep:state\.step/);
+  assert.doesNotMatch(source, /previous-step"\)\.onclick=async.*await save/);
 });
