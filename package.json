@@ -11,7 +11,7 @@
     "db:migrate": "node 03_services/api/src/db/migrate.mjs",
     "db:seed": "node 03_services/api/src/db/seed.mjs",
     "test": "node --test 03_services/api/test/*.test.mjs",
-    "smoke": "node Testing/smoke/smoke-check.mjs",
+    "smoke": "node Testing/smoke/smoke-check.mjs && node Testing/smoke/fp012-release-check.mjs",
     "test:browser": "playwright test"
   },
   "dependencies": {
