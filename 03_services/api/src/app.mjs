@@ -270,7 +270,11 @@ export async function routeRequest(req, url, dependencies = {}) {
     if (identity.role !== "parent" || identity.subject !== parentId) throw new ApiError("UNAUTHORIZED", "Parent-only summary access required");
     const summary = await db.getParentSummary(parentId);
     if (!summary) throw new ApiError("NOT_FOUND", "Parent not found");
-    return createResponse(200, summary);
+    const safeSummary = {
+      ...summary,
+      children: (summary.children || []).map(({ confidenceReflection: _confidenceReflection, ...child }) => child)
+    };
+    return createResponse(200, safeSummary);
   }
 
   const historyMatch = url.pathname.match(/^\/learners\/([^/]+)\/mission-history$/);
