@@ -129,6 +129,7 @@ async function refreshSessions() {
 
 async function createSession(event) {
   event.preventDefault();
+  const form = event.currentTarget;
   const learnerId = document.querySelector("#pilot-learner").value;
   const sessionLabel = document.querySelector("#pilot-session-label").value.trim();
   const message = document.querySelector("#pilot-operation-message");
@@ -139,7 +140,7 @@ async function createSession(event) {
       body: JSON.stringify({ learnerId, sessionLabel })
     });
     activeSessionId = session.id;
-    event.currentTarget.reset();
+    form.reset();
     message.textContent = "Pilot session prepared. Start it when the child and materials are ready.";
     await refreshSessions();
   } catch (error) {
