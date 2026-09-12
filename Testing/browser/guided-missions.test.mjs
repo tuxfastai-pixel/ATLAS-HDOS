@@ -25,7 +25,8 @@ test("FP-010A presents paper-first support without exposing internal levels or t
   assert.match(app,/Paper practice/);
   assert.match(app,/Write this challenge on paper/);
   assert.match(app,/I wrote it down/);
-  assert.match(app,/Record my independent attempt/);
+  assert.match(app,/Check my answer/);
+  assert.match(app,/independent attempt has been recorded/i);
   assert.match(app,/Would you like a little help\?/);
   assert.match(app,/I finished this paper step/);
   assert.match(app,/Idempotency-Key/);
