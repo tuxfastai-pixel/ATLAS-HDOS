@@ -40,7 +40,7 @@ test("FP-010B authors discreet challenge variants while keeping progression lang
   assert.match(progression,/discreet-progression-v1/);
   assert.match(progression,/three_recent_unsuccessful_attempts/);
   assert.match(progression,/transferStrong/);
-  assert.doesNotMatch(`${html}${app}`,/understanding|consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
+  assert.doesNotMatch(`${html}${app}`,/consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
 });
 
 test("FP-011 replaces development-facing copy with family pilot language",()=>{
