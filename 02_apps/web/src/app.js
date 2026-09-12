@@ -46,37 +46,41 @@ async function openMission(id){state.mission=await api(`/missions/${id}`);state.
 const confidence=["I need help","I am getting it","I understand","I can explain it"];
 const responseTypes=new Set(["number","choice","short_text","reflection","confidence"]);
 const stepResponseKey=(index=state.step)=>`step_${index+1}`;
-
+function inferredResponseType(step){
+  if(responseTypes.has(step.type))return step.type;
+  const instruction=step.instruction||"";
+  if(!instruction.includes("?"))return null;
+  return /\b(how many|how much|what number|total|altogether)\b/i.test(instruction)?"number":"short_text";
+}
 function savedStepResponse(index=state.step){return state.responses[stepResponseKey(index)]||null;}
-function stepRequiresResponse(step){return responseTypes.has(step.type);}
+function stepRequiresResponse(step){return Boolean(inferredResponseType(step));}
 function hasCurrentResponse(){
   const step=state.mission?.steps?.[state.step];
   if(!step||!stepRequiresResponse(step))return true;
-  const saved=savedStepResponse();
+  const type=inferredResponseType(step),saved=savedStepResponse();
   if(!saved)return false;
-  if(step.type==="number")return Number.isFinite(saved.answer);
-  if(step.type==="choice")return Boolean(saved.choice);
-  if(step.type==="short_text")return Boolean(saved.shortText?.trim());
-  if(step.type==="reflection")return Boolean(saved.reflection?.trim());
-  if(step.type==="confidence")return Boolean(saved.confidence);
+  if(type==="number")return Number.isFinite(saved.answer);
+  if(type==="choice")return Boolean(saved.choice);
+  if(type==="short_text")return Boolean(saved.shortText?.trim());
+  if(type==="reflection")return Boolean(saved.reflection?.trim());
+  if(type==="confidence")return Boolean(saved.confidence);
   return true;
 }
 
 function inputFor(step){
-  const saved=savedStepResponse()||{};
-  if(step.type==="number")return `<label class="response-input">Your answer<input data-response="answer" type="number" min="0" max="100" value="${esc(saved.answer??"")}" inputmode="numeric" required><small>Work it out first, then enter a whole number from 0 to 100.</small></label>`;
-  if(step.type==="confidence")return `<fieldset><legend>How confident do you feel?</legend>${confidence.map(c=>`<label class="choice"><input type="radio" name="confidence" value="${c}" ${saved.confidence===c?"checked":""}>${c}</label>`).join("")}</fieldset>`;
-  if(step.type==="short_text")return `<label>Your response<textarea data-response="short_text" rows="${state.learnerId.includes("leago")?5:2}" maxlength="1000" required>${esc(saved.shortText??"")}</textarea></label>${state.learnerId.includes("leago")?'<label>Optional research note<textarea data-response="researchNote" rows="2" maxlength="1000">'+esc(state.responses.researchNote||"")+'</textarea></label>':""}`;
-  if(step.type==="reflection")return `<label>Reflection<textarea data-response="reflection" rows="${state.learnerId.includes("leago")?5:2}" maxlength="1000" required>${esc(saved.reflection??"")}</textarea></label>`;
-  if(step.type==="choice")return `<div class="choice-grid">${["I practised this","I need another look"].map(choice=>`<button type="button" data-choice="${choice}" aria-pressed="${saved.choice===choice}" class="${saved.choice===choice?"choice-selected":""}">${choice}</button>`).join("")}</div>${saved.choice?'<div class="continue-cue" role="status"><strong>Great — I’ve recorded that.</strong><span>Tap Next to continue your mission. ➜</span></div>':""}`;
+  const saved=savedStepResponse()||{},type=inferredResponseType(step);
+  if(type==="number")return `<label class="response-input">Your answer<input data-response="answer" type="number" min="0" max="100" value="${esc(saved.answer??"")}" inputmode="numeric" required><small>Work it out first, then enter a whole number from 0 to 100.</small></label>`;
+  if(type==="confidence")return `<fieldset><legend>How confident do you feel?</legend>${confidence.map(c=>`<label class="choice"><input type="radio" name="confidence" value="${c}" ${saved.confidence===c?"checked":""}>${c}</label>`).join("")}</fieldset>`;
+  if(type==="short_text")return `<label>Your response<textarea data-response="short_text" rows="${state.learnerId.includes("leago")?5:2}" maxlength="1000" required>${esc(saved.shortText??"")}</textarea></label>${state.learnerId.includes("leago")?'<label>Optional research note<textarea data-response="researchNote" rows="2" maxlength="1000">'+esc(state.responses.researchNote||"")+'</textarea></label>':""}`;
+  if(type==="reflection")return `<label>Reflection<textarea data-response="reflection" rows="${state.learnerId.includes("leago")?5:2}" maxlength="1000" required>${esc(saved.reflection??"")}</textarea></label>`;
+  if(type==="choice")return `<div class="choice-grid">${["I practised this","I need another look"].map(choice=>`<button type="button" data-choice="${choice}" aria-pressed="${saved.choice===choice}" class="${saved.choice===choice?"choice-selected":""}" ${saved.choice===choice?'style="outline:4px solid #f2b84b;outline-offset:3px"':""}>${choice}</button>`).join("")}</div>${saved.choice?'<div class="continue-cue" role="status"><strong>Great — I’ve recorded that.</strong><br><span>Tap Next to continue your mission. ➜</span></div>':""}`;
   return `<p class="instruction-note">Read this step, then choose Next when you are ready.</p>`;
 }
 
 function collect(){
   const step=state.mission?.steps?.[state.step];
   if(!step)return;
-  const key=stepResponseKey();
-  const current={...(state.responses[key]||{})};
+  const key=stepResponseKey(),current={...(state.responses[key]||{})};
   document.querySelectorAll("[data-response]").forEach(i=>{
     if(i.dataset.response==="answer"){
       if(i.value!=="")current.answer=Number(i.value); else delete current.answer;
@@ -98,18 +102,17 @@ function collect(){
   if(current.choice)state.responses.choice=current.choice;
 }
 
-function adaptivePanel(){const player=state.adaptive,challenge=player?.challenge;if(!challenge||challenge.stepOrder!==state.step+1)return "";const paper=challenge.paperPractice;return `<section class="paper-practice-panel" aria-label="Paper practice"><h4>Paper practice</h4><p>${esc(challenge.prompt)}</p><p>Write this challenge on paper and work through it step by step. Atlas records only what you confirm here.</p>${player.permittedActions.confirmWritten?'<button type="button" data-adaptive-action="confirm-written">I wrote it down</button>':paper.confirmedWritten?'<p class="adaptive-confirmed">Paper step ready.</p>':""}</section><section class="support-panel" aria-live="polite"><h4>Thinking support</h4>${player.permittedActions.recordIndependentAttempt?'<p>Enter your answer above after working it out, then record your independent attempt.</p><button type="button" data-adaptive-action="attempt">Check my answer</button>':'<p>Your independent attempt has been recorded.</p>'}${challenge.support?`<div class="support-content"><strong>${esc(challenge.support.kind.replaceAll("_"," "))}</strong><p>${esc(challenge.support.content)}</p></div>`:""}${player.permittedActions.requestSupport?'<button type="button" data-adaptive-action="support">Would you like a little help?</button>':challenge.supportComplete?'<p>You have used the available support. Try the original challenge again or take a short pause.</p>':""}${player.permittedActions.completePaperStep?'<button type="button" data-adaptive-action="paper-complete">I finished this paper step</button>':paper.stepCompleted?'<p class="adaptive-confirmed">Paper practice complete.</p>':""}</section>`;}
+function adaptivePanel(){const player=state.adaptive,challenge=player?.challenge;if(!challenge||challenge.stepOrder!==state.step+1)return "";const paper=challenge.paperPractice;return `<section class="paper-practice-panel" aria-label="Paper practice"><h4>Paper practice</h4><p>${esc(challenge.prompt)}</p><p>Write this challenge on paper and work through it step by step. Atlas records only what you confirm here.</p>${player.permittedActions.confirmWritten?'<button type="button" data-adaptive-action="confirm-written">I wrote it down</button>':paper.confirmedWritten?'<p class="adaptive-confirmed">Paper step ready.</p>':""}</section><section class="support-panel" aria-live="polite"><h4>Thinking support</h4>${player.permittedActions.recordIndependentAttempt?'<p>Enter your answer above after working it out, then check your answer.</p><button type="button" data-adaptive-action="attempt">Check my answer</button>':'<p>Your independent attempt has been recorded.</p>'}${challenge.support?`<div class="support-content"><strong>${esc(challenge.support.kind.replaceAll("_"," "))}</strong><p>${esc(challenge.support.content)}</p></div>`:""}${player.permittedActions.requestSupport?'<button type="button" data-adaptive-action="support">Would you like a little help?</button>':challenge.supportComplete?'<p>You have used the available support. Try the original challenge again or take a short pause.</p>':""}${player.permittedActions.completePaperStep?'<button type="button" data-adaptive-action="paper-complete">I finished this paper step</button>':paper.stepCompleted?'<p class="adaptive-confirmed">Paper practice complete.</p>':""}</section>`;}
 function adaptiveStepReady(){const challenge=state.adaptive?.challenge;if(!challenge||challenge.stepOrder!==state.step+1)return true;const paper=challenge.paperPractice;return !state.adaptive.permittedActions.recordIndependentAttempt&&(!paper.required||paper.stepCompleted);}
 function canAdvance(){return hasCurrentResponse()&&adaptiveStepReady();}
 
 function responseForCurrentStep(){
-  const step=state.mission.steps[state.step];
-  const saved=savedStepResponse()||{};
-  if(step.type==="number"&&Number.isFinite(saved.answer))return {answer:saved.answer};
-  if(step.type==="short_text"&&saved.shortText)return {shortText:saved.shortText};
-  if(step.type==="reflection"&&saved.reflection)return {reflection:saved.reflection};
-  if(step.type==="confidence"&&saved.confidence)return {confidence:saved.confidence};
-  if(step.type==="choice"&&saved.choice)return {choice:saved.choice};
+  const step=state.mission.steps[state.step],type=inferredResponseType(step),saved=savedStepResponse()||{};
+  if(type==="number"&&Number.isFinite(saved.answer))return {answer:saved.answer};
+  if(type==="short_text"&&saved.shortText)return {shortText:saved.shortText};
+  if(type==="reflection"&&saved.reflection)return {reflection:saved.reflection};
+  if(type==="confidence"&&saved.confidence)return {confidence:saved.confidence};
+  if(type==="choice"&&saved.choice)return {choice:saved.choice};
   return null;
 }
 
@@ -126,12 +129,7 @@ async function adaptiveAction(action){
   }catch(error){$("#workspace-message").textContent=error.message;await loadAdaptivePlayer();renderStep();}
 }
 
-function updateAdvanceState(){
-  collect();
-  const next=$("#next-step");
-  if(next)next.disabled=!canAdvance();
-}
-
+function updateAdvanceState(){collect();const next=$("#next-step");if(next)next.disabled=!canAdvance();if(state.step===state.mission.steps.length-1)$("#complete-mission").disabled=!canAdvance();}
 function renderStep(){
   const step=state.mission.steps[state.step], total=state.mission.steps.length, percent=Math.round(state.completed.length/total*100);
   $("#step-indicator").textContent=`Step ${state.step+1} of ${total}${state.completed.includes(state.step)?" · completed":" · current"}`;
@@ -144,18 +142,8 @@ function renderStep(){
   $("#next-step").disabled=!canAdvance();
   $("#complete-mission").classList.toggle("hidden",state.step!==total-1);
   if(state.step===total-1)$("#complete-mission").disabled=!canAdvance();
-
-  $("#current-step").querySelectorAll("[data-choice]").forEach(b=>b.onclick=()=>{
-    const key=stepResponseKey();
-    state.responses[key]={...(state.responses[key]||{}),choice:b.dataset.choice};
-    state.responses.choice=b.dataset.choice;
-    $("#workspace-message").textContent="Great — I’ve recorded that. Tap Next when you are ready.";
-    renderStep();
-  });
-  $("#current-step").querySelectorAll("[data-response]").forEach(input=>{
-    input.addEventListener("input",updateAdvanceState);
-    input.addEventListener("change",updateAdvanceState);
-  });
+  $("#current-step").querySelectorAll("[data-choice]").forEach(b=>b.onclick=()=>{const key=stepResponseKey();state.responses[key]={...(state.responses[key]||{}),choice:b.dataset.choice};state.responses.choice=b.dataset.choice;$("#workspace-message").textContent="Great — I’ve recorded that. Tap Next when you are ready.";renderStep();});
+  $("#current-step").querySelectorAll("[data-response]").forEach(input=>{input.addEventListener("input",updateAdvanceState);input.addEventListener("change",updateAdvanceState);});
   $("#current-step").querySelectorAll('input[name="confidence"]').forEach(input=>input.addEventListener("change",updateAdvanceState));
   $("#current-step").querySelectorAll("[data-adaptive-action]").forEach(b=>b.onclick=()=>adaptiveAction(b.dataset.adaptiveAction));
   $("#current-step").focus();
