@@ -50,6 +50,23 @@ async function request(origin, path, options = {}) {
   return { response, body };
 }
 
+test("pilot operations CORS preflight succeeds without authentication", async () => {
+  await withApi(async (origin) => {
+    const result = await request(origin, `/parents/${parentId}/pilot-sessions`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type,authorization"
+      }
+    });
+    assert.equal(result.response.status, 204);
+    assert.equal(result.response.headers.get("access-control-allow-origin"), "*");
+    assert.match(result.response.headers.get("access-control-allow-methods") || "", /OPTIONS/);
+    assert.match(result.response.headers.get("access-control-allow-headers") || "", /authorization/);
+  });
+});
+
 test("owning parent can create, start, observe and complete a pilot session", async () => {
   await withApi(async (origin) => {
     const created = await request(origin, `/parents/${parentId}/pilot-sessions`, {
