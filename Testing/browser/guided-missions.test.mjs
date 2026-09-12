@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 const html=await readFile(new URL("../../02_apps/web/src/index.html",import.meta.url),"utf8");
 const app=await readFile(new URL("../../02_apps/web/src/app.js",import.meta.url),"utf8");
-const css=await readFile(new URL("../../02_apps/web/src/styles.css",import.meta.url),"utf8");
 const seed=await readFile(new URL("../../Database/postgres/seed.sql",import.meta.url),"utf8");
 const progression=await readFile(new URL("../../03_services/api/src/progression-rules.mjs",import.meta.url),"utf8");
+const css=await readFile(new URL("../../02_apps/web/src/styles.css",import.meta.url),"utf8");
 test("login surface supports learner and explicit parent credentials",()=>{assert.match(html,/autocomplete="username"/);assert.match(html,/current-password/);assert.match(app,/user\.role==="parent"/);});
 test("shared player exposes save, resume, previous, next and completion controls",()=>{for(const id of ["previous-step","next-step","save-exit","complete-mission","mission-progress"])assert.match(html,new RegExp(`id="${id}"`));assert.match(app,/attempts\/start/);});
 test("Siyana and Leago response controls share accessible rendering",()=>{assert.match(app,/type="number"/);assert.match(app,/I need help/);assert.match(app,/research note/i);assert.match(app,/<fieldset>/);});
@@ -19,7 +19,7 @@ test("learner Growth DNA and child-separated parent insights use cautious langua
   assert.match(app, /growthInsights/);
   assert.doesNotMatch(`${html}${app}`, /sibling rank|better than|worse than/i);
 });
-test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended next mission/);assert.match(app,/Why Atlas picked this/);assert.match(app,/Open recommended mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});
+test("Adaptive Learning presents explainable learner and per-child parent recommendations",()=>{assert.match(html,/Recommended Next Mission/);assert.match(app,/Why Atlas picked this/);assert.match(app,/Open recommended mission/);assert.match(app,/data-learner-id/);assert.match(app,/recommendation-reason/);assert.match(app,/supported-growth-areas/);});
 
 test("FP-010A presents paper-first support without exposing internal levels or the protected answer",()=>{
   assert.match(app,/Paper practice/);
@@ -55,7 +55,7 @@ test("FP-011 provides clear continue, support and return guidance",()=>{
   assert.match(app,/Continue mission/);
   assert.match(app,/Your place is saved/);
   assert.match(app,/Welcome back\. Your saved place is ready/);
-  assert.match(app,/Ask Atlas for help|support your thinking/i);
+  assert.match(app,/Thinking support|Would you like a little help\?/i);
   assert.match(app,/factual learning evidence/i);
 });
 
