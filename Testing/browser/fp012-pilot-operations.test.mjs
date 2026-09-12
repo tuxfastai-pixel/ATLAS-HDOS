@@ -31,3 +31,7 @@ test("pilot workspace uses parent-scoped lifecycle endpoints and recovery copy",
   assert.match(source, /Your family learning overview is still available/);
   assert.match(styles, /\.pilot-session-form/);
 });
+
+test("hidden application screens cannot be overridden by screen-specific display rules", () => {
+  assert.match(styles, /\.hidden\s*\{\s*display:\s*none\s*!important;\s*\}/);
+});
