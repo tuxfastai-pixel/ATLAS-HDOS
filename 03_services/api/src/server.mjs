@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { errorResponse, routeRequest } from "./app.mjs";
+import { routePilotOperations } from "./pilot-operations.mjs";
 import { loadConfig } from "./config.mjs";
 import { ApiError } from "./errors.mjs";
 import { logRequest, logUnexpected, requestId } from "./logging.mjs";
@@ -13,7 +14,7 @@ export function createApiServer({ dependencies, logger = console } = {}) {
     let response;
 
     try {
-      response = await routeRequest(req, url, dependencies);
+      response = await routePilotOperations(req, url, dependencies) || await routeRequest(req, url, dependencies);
     } catch (error) {
       if (!(error instanceof ApiError)) logUnexpected(logger, { requestId: id, method: req.method, route: url.pathname, error });
       response = errorResponse(error);
