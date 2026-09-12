@@ -57,11 +57,11 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await login(page, "leago", "atlas123");
     await expect(page.getByRole("heading", { name: "Welcome, Leago" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Recommended Next Mission" })).toBeVisible();
-    await expect(page.getByText("Why this mission?")).toBeVisible();
+    await expect(page.getByText("Why Atlas picked this")).toBeVisible();
     await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button").click();
     await goNext(page);
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button", { name: "Resume", exact: true }).click();
+    await page.getByRole("article").filter({ hasText: "The Lost Fossil" }).getByRole("button", { name: "Continue mission", exact: true }).click();
     await expect(page.locator("#progress-area")).toBeVisible();
     await expect(page.locator("#step-indicator")).toContainText("Step 2 of");
     await advanceToEnd(page);
@@ -78,7 +78,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await goNext(page);
     await goNext(page);
     await expect(page.getByRole("region", { name: "Paper practice" })).toBeVisible();
-    await expect(page.getByText("Write this challenge on paper.")).toBeVisible();
+    await expect(page.getByText(/Write this challenge on paper/)).toBeVisible();
     await expect(page.getByText(/Draw 5 paw prints, then 2 more/i)).toBeVisible();
     await page.getByLabel("Your number").fill("7");
     await adaptiveAction(page, "I wrote it down", "/confirm-written");
@@ -87,7 +87,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await expect(page.getByText(/Circle the two groups of paw prints/i)).toBeVisible();
     await adaptiveAction(page, "I finished this paper step", "/paper-complete");
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Resume", exact: true }).click();
+    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Continue mission", exact: true }).click();
     await expect(page.getByText(/Circle the two groups of paw prints/i)).toBeVisible();
     await expect(page.locator("body")).not.toContainText(/Level [0-9]|mastery score|difficulty level|weak learner|strong learner/i);
     await goNext(page);
@@ -97,7 +97,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await goNext(page);
     await page.getByLabel("I understand").check();
     await page.getByRole("button", { name: "Save and exit" }).click();
-    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Resume", exact: true }).click();
+    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Continue mission", exact: true }).click();
     await expect(page.locator("#progress-area")).toBeVisible();
     await expect(page.getByLabel("I understand")).toBeChecked();
     await advanceToEnd(page);
@@ -105,7 +105,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await expect(page.getByRole("heading", { name: "Mission complete!" })).toBeVisible();
     await expect(page.locator("#growth-dna-list")).toContainText(/numeracy|persistence/i);
 
-    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Retry mission", exact: true }).click();
+    await page.getByRole("article").filter({ hasText: "Junior Detective Maths" }).getByRole("button", { name: "Try again", exact: true }).click();
     await goNext(page);
     await goNext(page);
     await expect(page.getByText(/Draw 5 paw prints, then 2 more/i)).toBeVisible();
@@ -124,7 +124,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
       await expect(child.locator(".recommendation-reason")).toHaveCount(1);
       await expect(child.locator(".recommendation-reason")).not.toBeEmpty();
       await expect(child.locator(".supported-growth-areas")).toHaveCount(1);
-      await expect(child.locator(".supported-growth-areas")).toContainText("Supported growth areas:");
+      await expect(child.locator(".supported-growth-areas")).toContainText("Growth areas this mission supports:");
     }
     await expect(page.getByText(/Most recently completed: The Lost Fossil/)).toBeVisible();
     await expect(page.getByText("Why Atlas is showing this:").first()).toBeVisible();
