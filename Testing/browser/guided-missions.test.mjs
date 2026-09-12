@@ -55,7 +55,7 @@ test("FP-011 replaces development-facing copy with family pilot language",()=>{
 test("FP-011 provides clear continue, support and return guidance",()=>{
   assert.match(app,/Continue mission/);
   assert.match(app,/Your place is saved/);
-  assert.match(app,/Welcome back\. Your saved place is ready/);
+  assert.match(app,/Welcome back\. Atlas opened your next unfinished step\. You can review earlier steps at any time\./);
   assert.match(app,/Thinking support|Would you like a little help\?/i);
   assert.match(app,/factual learning evidence/i);
 });
