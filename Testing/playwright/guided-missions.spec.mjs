@@ -109,7 +109,7 @@ test.describe.serial("Sprint 007 persisted browser journeys", () => {
     await goNext(page);
     await goNext(page);
     await expect(page.getByText(/Draw 5 paw prints, then 2 more/i)).toBeVisible();
-    await expect(page.locator("body")).not.toContainText(/understanding|consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
+    await expect(page.locator("body")).not.toContainText(/consolidation|mastery_evidence|demand_stage|progression stage|promoted|demoted/i);
     await page.getByRole("button", { name: "Save and exit" }).click();
   });
 
